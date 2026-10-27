@@ -2,7 +2,7 @@
 
 import { api, session } from "./api.js";
 import { Dashboard } from "./dashboard.js";
-import { $, $$, confirmDialog, dialog, fmt, fmtDateTime, html, icon, raw, setHTML, timeAgo, toast } from "./util.js";
+import { $, $$, confirmDialog, dialog, fmt, fmtDateTime, markup, icon, raw, setHTML, timeAgo, toast } from "./util.js";
 import { colorsFor, palette, repoHref } from "./widgets.js";
 
 const TABS = [["", "Dashboard layout"], ["repos", "Repositories"], ["collection", "Data collection"], ["settings", "Settings"]];
@@ -11,7 +11,7 @@ const TABS = [["", "Dashboard layout"], ["repos", "Repositories"], ["collection"
 export function renderLogin(main, site, onDone) {
   if (site.needs_setup) {
     if (!site.setup_allowed) {
-      setHTML(main, html`<div class="auth-wrap"><div class="auth-card">
+      setHTML(main, markup`<div class="auth-wrap"><div class="auth-card">
         <h1>Create the admin account</h1>
         <p>For safety, the first admin account can only be created on the server itself. Open
         <strong>http://localhost:${location.port || 80}/admin</strong> on that computer, or run this in the RepoPulse folder:</p>
@@ -20,7 +20,7 @@ export function renderLogin(main, site, onDone) {
       </div></div>`);
       return;
     }
-    setHTML(main, html`<div class="auth-wrap"><div class="auth-card">
+    setHTML(main, markup`<div class="auth-wrap"><div class="auth-card">
       <h1>Create the admin account</h1>
       <p>This account manages the repositories and the dashboard. Visitors don't need one.</p>
       <form id="setup-form" novalidate>
@@ -42,7 +42,7 @@ export function renderLogin(main, site, onDone) {
     });
     return;
   }
-  setHTML(main, html`<div class="auth-wrap"><div class="auth-card">
+  setHTML(main, markup`<div class="auth-wrap"><div class="auth-card">
     <h1>Log in</h1>
     <p>Log in to manage repositories and build the dashboard.</p>
     <form id="login-form" novalidate>
@@ -69,11 +69,11 @@ export function renderLogin(main, site, onDone) {
 
 /* ------------------------------------------------------------ shell */
 export async function renderAdmin(main, sub, navigate, slug = null) {
-  setHTML(main, html`
+  setHTML(main, markup`
     <div class="admin-head"><h1>Admin</h1>
       <div class="row" style="align-items:center"><span class="muted">Logged in as ${session.user}</span>
       <button type="button" class="btn small" id="logout">Log out</button></div></div>
-    <nav class="tabs" aria-label="Admin sections">${TABS.map(([k, l]) => html`<a href="/admin${k ? "/" + k : ""}" ${sub === k ? raw('aria-current="page"') : ""}>${l}</a>`)}</nav>
+    <nav class="tabs" aria-label="Admin sections">${TABS.map(([k, l]) => markup`<a href="/admin${k ? "/" + k : ""}" ${sub === k ? raw('aria-current="page"') : ""}>${l}</a>`)}</nav>
     <div id="admin-body"><p class="muted">Loading…</p></div>`);
   $("#logout").addEventListener("click", async () => {
     await api("/api/auth/logout", { method: "POST" }).catch(() => {});
@@ -90,7 +90,7 @@ export async function renderAdmin(main, sub, navigate, slug = null) {
     dash.render();
     return dash;
   } catch (e) {
-    setHTML(body, html`<p class="error-text">${e.message}</p>`);
+    setHTML(body, markup`<p class="error-text">${e.message}</p>`);
   }
 }
 
@@ -99,7 +99,7 @@ let pollTimer = null;
 function waitForCollection(onDone, label = "Collecting from GitHub…") {
   clearTimeout(pollTimer);
   const banner = $("#collect-status");
-  if (banner) { banner.hidden = false; setHTML(banner, html`<span class="spinner"></span> ${label}`); }
+  if (banner) { banner.hidden = false; setHTML(banner, markup`<span class="spinner"></span> ${label}`); }
   const tick = async () => {
     try {
       const r = await api("/api/admin/runs");
@@ -120,7 +120,7 @@ function waitForCollection(onDone, label = "Collecting from GitHub…") {
 async function reposView(body) {
   let repos = [];
   const pal = palette();
-  setHTML(body, html`
+  setHTML(body, markup`
     <section class="panel" aria-labelledby="add-h">
       <h2 id="add-h">Add repositories</h2>
       <p class="lead">Paste one or more repositories as <strong>owner/name</strong> or GitHub links. Their release downloads are collected right away and then once a day.</p>
@@ -153,22 +153,22 @@ async function reposView(body) {
   };
   const draw = () => {
     const colors = colorsFor(repos, pal);
-    if (!repos.length) { setHTML(list, html`<li class="empty">Nothing tracked yet. Add a repository above to start.</li>`); return; }
-    setHTML(list, html`${repos.map((r) => html`<li class="repo-item" data-id="${r.id}">
+    if (!repos.length) { setHTML(list, markup`<li class="empty">Nothing tracked yet. Add a repository above to start.</li>`); return; }
+    setHTML(list, markup`${repos.map((r) => markup`<li class="repo-item" data-id="${r.id}">
       <button type="button" class="handle" title="Drag to reorder" aria-label="Reorder ${r.full_name}. Use arrow keys up and down.">${icon("grip")}</button>
       <span class="swatch" style="background:${colors.get(r.id)}" aria-hidden="true"></span>
       <div class="repo-main">
-        <div class="name">${r.label} ${r.label !== r.name ? html`<span class="muted" style="font-weight:400">${r.full_name}</span>` : ""}
-          ${!r.enabled ? html`<span class="tag">paused</span>` : ""} ${r.hidden ? html`<span class="tag">hidden</span>` : ""} ${r.own_layout ? html`<span class="tag">own page layout</span>` : ""}</div>
+        <div class="name">${r.label} ${r.label !== r.name ? markup`<span class="muted" style="font-weight:400">${r.full_name}</span>` : ""}
+          ${!r.enabled ? markup`<span class="tag">paused</span>` : ""} ${r.hidden ? markup`<span class="tag">hidden</span>` : ""} ${r.own_layout ? markup`<span class="tag">own page layout</span>` : ""}</div>
         <div class="meta">
           <span>${r.downloads == null ? "no data yet" : fmt(r.downloads) + " downloads"}</span>
           <span>${fmt(r.stars ?? 0)} stars</span>
           <span>${r.days} ${r.days === 1 ? "day" : "days"} of history</span>
-          ${r.asset_filter ? html`<span>counting ${r.asset_filter}</span>` : ""}
+          ${r.asset_filter ? markup`<span>counting ${r.asset_filter}</span>` : ""}
           <span>${r.last_collected ? "collected " + timeAgo(r.last_collected) : "not collected yet"}</span>
           <a href="${r.url}" target="_blank" rel="noopener">GitHub</a>
         </div>
-        ${r.last_error ? html`<div class="error-text" style="font-size:13.5px;margin-top:3px">${r.last_error}</div>` : ""}
+        ${r.last_error ? markup`<div class="error-text" style="font-size:13.5px;margin-top:3px">${r.last_error}</div>` : ""}
       </div>
       <div class="repo-actions">
         <a class="btn small ghost" href="${repoHref({ base: "/admin" }, r)}">Page</a>
@@ -179,7 +179,7 @@ async function reposView(body) {
     </li>`)}`);
   };
 
-  const editPanel = (r) => html`<div class="repo-edit">
+  const editPanel = (r) => markup`<div class="repo-edit">
     <label class="field"><span>Name on the dashboard</span><input class="input" data-f="label" value="${r.label_custom}" placeholder="${r.name}" maxlength="80"></label>
     <div class="field"><span>Colour</span><div class="row" style="align-items:center;gap:8px">
       <input type="color" data-f="color" value="${r.color_custom || colorsFor([r], palette()).get(r.id)}" style="width:44px;height:36px;border:1px solid var(--line-strong);border-radius:8px;background:var(--panel);padding:2px">
@@ -294,7 +294,7 @@ function discoverDialog(onAdd) {
   let found = [];
   return dialog({
     title: "Browse a user or organisation",
-    body: html`<form id="disc-form" class="row" novalidate style="margin-bottom:12px">
+    body: markup`<form id="disc-form" class="row" novalidate style="margin-bottom:12px">
         <label class="field grow"><span>GitHub user or organisation</span><input class="input" name="owner" placeholder="octocat" autocomplete="off"></label>
         <button class="btn" type="submit">Look up</button></form>
       <div id="disc-result" class="muted">Public repositories are listed, most recently updated first.</div>`,
@@ -307,16 +307,16 @@ function discoverDialog(onAdd) {
       $("#disc-form", root).addEventListener("submit", async (e) => {
         e.preventDefault();
         const out = $("#disc-result", root);
-        setHTML(out, html`<span class="spinner"></span> Looking up…`);
+        setHTML(out, markup`<span class="spinner"></span> Looking up…`);
         try {
           found = (await api("/api/admin/discover", { method: "POST", body: { owner: e.target.owner.value } })).repos;
-          if (!found.length) { setHTML(out, html`No public repositories found.`); return; }
-          setHTML(out, html`<label class="check" style="margin-bottom:8px"><input type="checkbox" id="disc-all"> Select all except forks and archived repositories</label>
-            <div class="discover-list">${found.map((r) => html`<label><input type="checkbox" value="${r.full_name}" ${r.tracked ? "disabled checked" : ""} data-plain="${!r.fork && !r.archived}">
-              <span><strong>${r.full_name.split("/")[1]}</strong>${r.description ? html`<small>${r.description}</small>` : ""}</span>
+          if (!found.length) { setHTML(out, markup`No public repositories found.`); return; }
+          setHTML(out, markup`<label class="check" style="margin-bottom:8px"><input type="checkbox" id="disc-all"> Select all except forks and archived repositories</label>
+            <div class="discover-list">${found.map((r) => markup`<label><input type="checkbox" value="${r.full_name}" ${r.tracked ? "disabled checked" : ""} data-plain="${!r.fork && !r.archived}">
+              <span><strong>${r.full_name.split("/")[1]}</strong>${r.description ? markup`<small>${r.description}</small>` : ""}</span>
               <span class="muted" style="font-size:13px;white-space:nowrap">${r.tracked ? "tracked" : r.fork ? "fork" : r.archived ? "archived" : fmt(r.stars) + " ★"}</span></label>`)}</div>`);
           $("#disc-all", root).addEventListener("change", (ev) => $$('.discover-list input:not(:disabled)[data-plain="true"]', root).forEach((x) => { x.checked = ev.target.checked; }));
-        } catch (ex) { setHTML(out, html`<span class="error-text">${ex.message}</span>`); }
+        } catch (ex) { setHTML(out, markup`<span class="error-text">${ex.message}</span>`); }
       });
     },
   });
@@ -326,22 +326,22 @@ function discoverDialog(onAdd) {
 async function collectionView(body) {
   const draw = (r) => {
     const last = r.runs[0];
-    setHTML(body, html`
+    setHTML(body, markup`
       <section class="panel">
         <div class="cols-2">
           <div><h2>Next automatic collection</h2><p class="lead" style="margin:4px 0 0;font-size:18px">${fmtDateTime(r.next_run)}</p>
             <p class="muted" style="margin:4px 0 0">Change the time under Settings. If the server is off at that time, it collects as soon as it starts again.</p></div>
           <div><h2>Last collection</h2><p class="lead" style="margin:4px 0 0;font-size:18px">${last ? fmtDateTime(last.started_at) : "Not run yet"}</p>
-            ${last ? html`<p style="margin:4px 0 0">${statusTag(last.status)} <span class="muted">${last.repos_ok} collected, ${last.repos_failed} failed</span></p>` : ""}</div>
+            ${last ? markup`<p style="margin:4px 0 0">${statusTag(last.status)} <span class="muted">${last.repos_ok} collected, ${last.repos_failed} failed</span></p>` : ""}</div>
         </div>
         <div class="row" style="margin-top:16px"><button class="btn primary" id="run-now" ${r.busy ? "disabled" : ""}>${icon("refresh")} Collect all now</button></div>
       </section>
-      <p class="callout info" id="collect-status" ${r.busy ? "" : "hidden"} style="margin-top:16px">${r.busy ? html`<span class="spinner"></span> Collecting from GitHub…` : ""}</p>
+      <p class="callout info" id="collect-status" ${r.busy ? "" : "hidden"} style="margin-top:16px">${r.busy ? markup`<span class="spinner"></span> Collecting from GitHub…` : ""}</p>
       <section class="panel"><h2>History</h2><p class="lead">The last 50 collections.</p>
-        ${r.runs.length ? html`<div class="table-wrap"><table class="data"><thead><tr><th>Started</th><th>Started by</th><th>Result</th><th class="r">Collected</th><th class="r">Failed</th><th class="r">Took</th><th>Details</th></tr></thead>
-        <tbody>${r.runs.map((x) => html`<tr><td>${fmtDateTime(x.started_at)}</td><td>${x.trigger}</td><td>${statusTag(x.status)}</td>
+        ${r.runs.length ? markup`<div class="table-wrap"><table class="data"><thead><tr><th>Started</th><th>Started by</th><th>Result</th><th class="r">Collected</th><th class="r">Failed</th><th class="r">Took</th><th>Details</th></tr></thead>
+        <tbody>${r.runs.map((x) => markup`<tr><td>${fmtDateTime(x.started_at)}</td><td>${x.trigger}</td><td>${statusTag(x.status)}</td>
           <td class="r">${x.repos_ok}</td><td class="r">${x.repos_failed}</td><td class="r">${x.finished_at ? Math.max(0, Math.round((new Date(x.finished_at) - new Date(x.started_at)) / 1000)) + " s" : "–"}</td>
-          <td style="max-width:420px;white-space:pre-line;font-size:13.5px" class="muted">${x.message || ""}</td></tr>`)}</tbody></table></div>` : html`<p class="empty">Nothing collected yet.</p>`}
+          <td style="max-width:420px;white-space:pre-line;font-size:13.5px" class="muted">${x.message || ""}</td></tr>`)}</tbody></table></div>` : markup`<p class="empty">Nothing collected yet.</p>`}
       </section>`);
     $("#run-now").addEventListener("click", async () => {
       try { await api("/api/admin/collect", { method: "POST", body: {} }); $("#run-now").disabled = true; waitForCollection(reload); }
@@ -355,13 +355,13 @@ async function collectionView(body) {
 function statusTag(s) {
   const map = { ok: ["ok", "Succeeded"], partial: ["warn", "Partly failed"], failed: ["err", "Failed"], running: ["", "Running"] };
   const [cls, label] = map[s] || ["", s];
-  return html`<span class="tag ${cls}">${label}</span>`;
+  return markup`<span class="tag ${cls}">${label}</span>`;
 }
 
 /* ----------------------------------------------------------- settings */
 async function settingsView(body) {
   const s = await api("/api/admin/settings");
-  setHTML(body, html`
+  setHTML(body, markup`
     <section class="panel"><h2>Dashboard</h2><p class="lead">What visitors see at the top of the page.</p>
       <form id="f-site" class="stack" novalidate>
         <div class="cols-2"><label class="field"><span>Title</span><input class="input" name="site_title" value="${s.site_title}" maxlength="80"></label>
@@ -380,7 +380,7 @@ async function settingsView(body) {
         <p class="muted" id="rate-line" style="margin:0">Checking the GitHub API limit…</p>
         <p class="muted" style="margin:0;font-size:13.5px">A fine-grained token with read-only access to public repositories is enough. Create one on GitHub under Settings, Developer settings, Personal access tokens.</p>
         <div class="row"><button class="btn primary" type="submit">Save collection settings</button>
-          ${s.github_token_set ? html`<button class="btn danger" type="button" id="rm-token">Remove token</button>` : ""}</div>
+          ${s.github_token_set ? markup`<button class="btn danger" type="button" id="rm-token">Remove token</button>` : ""}</div>
       </form></section>
 
     <div class="cols-2" style="margin-top:16px">

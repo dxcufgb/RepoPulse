@@ -70,6 +70,10 @@ def main(argv: list[str] | None = None) -> int:
         if auth.user_count(db) == 0:
             print("\n  No admin account yet: open the Admin link on this computer to create one,")
             print("  or run:  python -m repopulse create-admin")
+        if cfg.host not in ("127.0.0.1", "::1", "localhost") and not cfg.secure_cookies:
+            print("\n  WARNING: serving on a network address over plain HTTP — the admin password and")
+            print("           session cookie cross the network unencrypted. Put RepoPulse behind HTTPS")
+            print("           and set secure_cookies=true, or bind host to 127.0.0.1 for local use.")
         print("  Press Ctrl+C to stop.\n")
         waitress_serve(app, host=cfg.host, port=cfg.port, threads=cfg.threads, ident="RepoPulse")
         return 0

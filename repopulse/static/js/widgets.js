@@ -3,7 +3,7 @@
 
 import { api } from "./api.js";
 import { bucket, pctChange, rangeLabel } from "./data.js";
-import { esc, fmt, fmt1, fmtCompact, fmtDay, html, icon, parseDate, raw, setHTML, timeAgo } from "./util.js";
+import { esc, fmt, fmt1, fmtCompact, fmtDay, markup, icon, parseDate, raw, setHTML, timeAgo } from "./util.js";
 
 /* ------------------------------------------------------------- theme */
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -134,15 +134,15 @@ function autoBucket(days, n) {
 function legendHTML(items, ctx) {
   if (items.length < 2) return raw("");
   const linked = ctx && ctx.links && items.some((it) => it.repo);
-  return html`<div class="legend" ${linked ? "" : raw('aria-hidden="true"')}>${items.map((it) => linked && it.repo
-    ? html`<a href="${repoHref(ctx, it.repo)}" title="Open ${it.label}"><i style="background:${it.color}"></i>${it.label}</a>`
-    : html`<span><i style="background:${it.color}"></i>${it.label}</span>`)}</div>`;
+  return markup`<div class="legend" ${linked ? "" : raw('aria-hidden="true"')}>${items.map((it) => linked && it.repo
+    ? markup`<a href="${repoHref(ctx, it.repo)}" title="Open ${it.label}"><i style="background:${it.color}"></i>${it.label}</a>`
+    : markup`<span><i style="background:${it.color}"></i>${it.label}</span>`)}</div>`;
 }
 
 function tableHTML(columns, rows) {
-  return html`<div class="table-wrap"><table class="data"><thead><tr>${columns.map((c, i) =>
-    html`<th class="${i ? "r" : ""}" scope="col">${c}</th>`)}</tr></thead><tbody>${rows.map((r) =>
-    html`<tr>${r.map((v, i) => i ? html`<td class="r">${typeof v === "number" ? fmt(v) : v ?? "–"}</td>` : html`<td>${v}</td>`)}</tr>`)}</tbody></table></div>`;
+  return markup`<div class="table-wrap"><table class="data"><thead><tr>${columns.map((c, i) =>
+    markup`<th class="${i ? "r" : ""}" scope="col">${c}</th>`)}</tr></thead><tbody>${rows.map((r) =>
+    markup`<tr>${r.map((v, i) => i ? markup`<td class="r">${typeof v === "number" ? fmt(v) : v ?? "–"}</td>` : markup`<td>${v}</td>`)}</tr>`)}</tbody></table></div>`;
 }
 
 /* ------------------------------------------------------------ settings */
@@ -353,7 +353,7 @@ export function renderWidget(cfg, ctx) {
     type.render(content, cfg, ctx);
   } catch (e) {
     console.error(e);
-    setHTML(content, html`<div class="widget"><p class="error-text">This widget could not be drawn: ${e.message}</p></div>`);
+    setHTML(content, markup`<div class="widget"><p class="error-text">This widget could not be drawn: ${e.message}</p></div>`);
   }
   if (ctx.tools) ctx.tools(slot, cfg);
   return slot;
@@ -361,10 +361,10 @@ export function renderWidget(cfg, ctx) {
 
 function shell(slot, cfg, ctx, { tableToggle = false } = {}) {
   const sub = subtitleOf(cfg, ctx);
-  setHTML(slot, html`<section class="widget" aria-labelledby="t-${cfg.id}">
+  setHTML(slot, markup`<section class="widget" aria-labelledby="t-${cfg.id}">
     <div class="widget-head">
-      <div><h2 class="widget-title" id="t-${cfg.id}">${titleOf(cfg, ctx)}</h2>${sub ? html`<div class="widget-sub">${sub}</div>` : ""}</div>
-      <div class="widget-tools">${tableToggle ? html`<button type="button" class="icon-btn" data-act="table" aria-pressed="false" title="Show as table" aria-label="Show as table">${icon("table")}</button>` : ""}</div>
+      <div><h2 class="widget-title" id="t-${cfg.id}">${titleOf(cfg, ctx)}</h2>${sub ? markup`<div class="widget-sub">${sub}</div>` : ""}</div>
+      <div class="widget-tools">${tableToggle ? markup`<button type="button" class="icon-btn" data-act="table" aria-pressed="false" title="Show as table" aria-label="Show as table">${icon("table")}</button>` : ""}</div>
     </div>
     <div class="widget-body"></div></section>`);
   return slot.querySelector(".widget-body");
@@ -387,7 +387,7 @@ function chartWithTable(slot, cfg, ctx, draw, table) {
 }
 
 function noData(body, text = "No data yet. Numbers appear after the first daily collection.") {
-  setHTML(body, html`<p class="empty">${text}</p>`);
+  setHTML(body, markup`<p class="empty">${text}</p>`);
 }
 
 /* hero ---------------------------------------------------------------- */
@@ -407,13 +407,13 @@ function renderHero(slot, cfg, ctx) {
   const periodWord = days ? rangeLabel(days).toLowerCase() : "since tracking started";
   const prevWord = days ? `the ${days === 365 ? "12 months" : days + " days"} before` : "";
 
-  setHTML(slot, html`<section class="pulse" aria-labelledby="t-${cfg.id}">
+  setHTML(slot, markup`<section class="pulse" aria-labelledby="t-${cfg.id}">
     <div class="pulse-figures">
       <div class="pulse-label" id="t-${cfg.id}">${titleOf(cfg, ctx)}</div>
       <div class="pulse-total">${fmt(total)}</div>
       <div class="pulse-delta">
         <span><strong>${gained == null ? "–" : "+" + fmt(gained)}</strong> ${periodWord}</span>
-        ${pct == null ? "" : html`<span><span class="${pct >= 0 ? "delta-up" : "delta-down"}">${pct >= 0 ? "▲" : "▼"} ${fmt1(Math.abs(pct))}%</span> compared with ${prevWord}</span>`}
+        ${pct == null ? "" : markup`<span><span class="${pct >= 0 ? "delta-up" : "delta-down"}">${pct >= 0 ? "▲" : "▼"} ${fmt1(Math.abs(pct))}%</span> compared with ${prevWord}</span>`}
       </div>
     </div>
     <div class="pulse-chart"><canvas role="img" aria-label="New downloads per ${unit}, ${periodWord}"></canvas></div>
@@ -423,7 +423,7 @@ function renderHero(slot, cfg, ctx) {
   const pal = palette();
   const canvas = slot.querySelector("canvas");
   if (model.empty || daily.values.every((v) => v == null)) {
-    setHTML(slot.querySelector(".pulse-chart"), html`<p class="empty">The pulse starts after two daily collections.</p>`);
+    setHTML(slot.querySelector(".pulse-chart"), markup`<p class="empty">The pulse starts after two daily collections.</p>`);
     return;
   }
   const fmtd = dateFormatter(by);
@@ -473,7 +473,7 @@ function renderKpi(slot, cfg, ctx) {
   };
   const vs = (now, before) => {
     const p = pctChange(now, before);
-    return p == null ? "" : html`<span class="${p >= 0 ? "delta-up" : "delta-down"}">${p >= 0 ? "▲" : "▼"} ${fmt1(Math.abs(p))}%</span> compared with the period before`;
+    return p == null ? "" : markup`<span class="${p >= 0 ? "delta-up" : "delta-down"}">${p >= 0 ? "▲" : "▼"} ${fmt1(Math.abs(p))}%</span> compared with the period before`;
   };
   switch (cfg.metric) {
     case "total":
@@ -510,7 +510,7 @@ function renderKpi(slot, cfg, ctx) {
       let best = null, bestG = -1;
       for (const r of repos) { const g = model.gained([r], win.startI, win.endI) ?? -1; if (g > bestG) { best = r; bestG = g; } }
       if (best && bestG >= 0) {
-        value = ctx.links ? html`<a href="${repoHref(ctx, best)}" class="kpi-link">${best.label}</a>` : best.label; small = true;
+        value = ctx.links ? markup`<a href="${repoHref(ctx, best)}" class="kpi-link">${best.label}</a>` : best.label; small = true;
         note = `+${fmt(bestG)} downloads, ${fmt(best.total)} in total`;
         sparkColor = colorsFor(repos, pal).get(best.id);
         spark = model.series(best, "daily", win);
@@ -534,9 +534,9 @@ function renderKpi(slot, cfg, ctx) {
       break;
     }
   }
-  setHTML(body, html`<div class="kpi-value num" style="${small ? "font-size:28px;line-height:1.1;word-break:break-word" : ""}">${value}</div>
+  setHTML(body, markup`<div class="kpi-value num" style="${small ? "font-size:28px;line-height:1.1;word-break:break-word" : ""}">${value}</div>
     <div class="kpi-note">${note}</div>
-    ${cfg.spark && spark && spark.some((v) => v != null) ? html`<div class="kpi-spark"><canvas aria-hidden="true"></canvas></div>` : ""}`);
+    ${cfg.spark && spark && spark.some((v) => v != null) ? markup`<div class="kpi-spark"><canvas aria-hidden="true"></canvas></div>` : ""}`);
   const canvas = body.querySelector("canvas");
   if (canvas) {
     chart(ctx, canvas, {
@@ -582,7 +582,7 @@ function seriesChart(slot, cfg, ctx, series, by, unitWord, emptyText) {
   const stacked = series.length > 1 && cfg.style !== "line";
   chartWithTable(slot, cfg, ctx, (body) => {
     if (emptyText === null || !labels.length || series.every((x) => x.values.every((v) => v == null))) return noData(body, emptyText || undefined);
-    setHTML(body, html`${legendHTML(series, ctx)}<div class="chart-box"><canvas role="img" aria-label="${titleOf(cfg, ctx)}"></canvas></div>`);
+    setHTML(body, markup`${legendHTML(series, ctx)}<div class="chart-box"><canvas role="img" aria-label="${titleOf(cfg, ctx)}"></canvas></div>`);
     const isBar = cfg.style === "bar";
     chart(ctx, body.querySelector("canvas"), {
       type: isBar ? "bar" : "line",
@@ -630,11 +630,11 @@ function renderBreakdown(slot, cfg, ctx) {
   chartWithTable(slot, cfg, ctx, (body) => {
     if (!repos.length || total === 0) return noData(body, repos.length ? `No ${unit} yet.` : "No repositories yet.");
     if (cfg.style === "doughnut") {
-      setHTML(body, html`<div class="chart-box round"><canvas role="img" aria-label="${titleOf(cfg, ctx)}"></canvas>
+      setHTML(body, markup`<div class="chart-box round"><canvas role="img" aria-label="${titleOf(cfg, ctx)}"></canvas>
         <div style="position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;text-align:center">
           <div><div class="kpi-value num" style="font-size:30px;margin:0">${fmtCompact(total)}</div><div class="muted" style="font-size:13px">${unit}</div></div></div></div>
-        <div class="legend" style="margin:14px 0 0;flex-direction:column;gap:6px">${items.map((it) => html`<span style="justify-content:space-between;display:flex">
-          <span style="display:inline-flex;gap:8px;align-items:center;min-width:0"><i style="background:${it.color}"></i><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${ctx.links && it.repo ? html`<a href="${repoHref(ctx, it.repo)}">${it.label}</a>` : it.label}</span></span>
+        <div class="legend" style="margin:14px 0 0;flex-direction:column;gap:6px">${items.map((it) => markup`<span style="justify-content:space-between;display:flex">
+          <span style="display:inline-flex;gap:8px;align-items:center;min-width:0"><i style="background:${it.color}"></i><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${ctx.links && it.repo ? markup`<a href="${repoHref(ctx, it.repo)}">${it.label}</a>` : it.label}</span></span>
           <span class="num" style="color:var(--ink)">${fmt(it.value)} <span class="muted">${fmt1((it.value / total) * 100)}%</span></span></span>`)}</div>`);
       chart(ctx, body.querySelector("canvas"), {
         type: "doughnut",
@@ -646,7 +646,7 @@ function renderBreakdown(slot, cfg, ctx) {
     }
     const horizontal = cfg.style === "hbar";
     const height = horizontal ? Math.max(160, items.length * 38 + 40) : 280;
-    setHTML(body, html`<div class="chart-box" style="height:${height}px"><canvas role="img" aria-label="${titleOf(cfg, ctx)}"></canvas></div>`);
+    setHTML(body, markup`<div class="chart-box" style="height:${height}px"><canvas role="img" aria-label="${titleOf(cfg, ctx)}"></canvas></div>`);
     chart(ctx, body.querySelector("canvas"), {
       type: "bar",
       data: { labels: items.map((x) => x.label), datasets: [{ label: unit, data: items.map((x) => x.value), backgroundColor: items.map((x) => x.color), borderRadius: 4, borderSkipped: "start", maxBarThickness: horizontal ? 24 : 48 }] },
@@ -655,7 +655,7 @@ function renderBreakdown(slot, cfg, ctx) {
         plugins: { legend: { display: false }, tooltip: tooltip(pal, (it) => it[0].label, (c) => ` ${fmt(horizontal ? c.parsed.x : c.parsed.y)} ${unit}`) },
         scales: axisOptions(pal, { horizontal }) },
     });
-  }, () => [["Repository", unit[0].toUpperCase() + unit.slice(1), "Share"], items.map((x) => [ctx.links && x.repo ? html`<a href="${repoHref(ctx, x.repo)}">${x.label}</a>` : x.label, x.value, total ? fmt1((x.value / total) * 100) + "%" : "–"])]);
+  }, () => [["Repository", unit[0].toUpperCase() + unit.slice(1), "Share"], items.map((x) => [ctx.links && x.repo ? markup`<a href="${repoHref(ctx, x.repo)}">${x.label}</a>` : x.label, x.value, total ? fmt1((x.value / total) * 100) + "%" : "–"])]);
 }
 
 /* releases ------------------------------------------------------------ */
@@ -673,10 +673,10 @@ function renderReleases(slot, cfg, ctx) {
   const asTable = cfg.style === "table";
   let rows = [];
   const tableCols = ["Release", "Published", "Downloads", "Last 7 days"];
-  const tableRows = () => rows.map((r) => [html`<a href="${r.url || repo.url + "/releases"}" target="_blank" rel="noopener">${r.tag}</a>${r.name && r.name !== r.tag ? html` <span class="muted">${r.name}</span>` : ""}${r.prerelease ? html` <span class="tag">pre-release</span>` : ""}`,
+  const tableRows = () => rows.map((r) => [markup`<a href="${r.url || repo.url + "/releases"}" target="_blank" rel="noopener">${r.tag}</a>${r.name && r.name !== r.tag ? markup` <span class="muted">${r.name}</span>` : ""}${r.prerelease ? markup` <span class="tag">pre-release</span>` : ""}`,
     r.published_at ? new Date(r.published_at).toLocaleDateString() : "–", r.downloads, r.last_7_days]);
   const draw = (body) => {
-    setHTML(body, html`<p class="empty"><span class="spinner"></span></p>`);
+    setHTML(body, markup`<p class="empty"><span class="spinner"></span></p>`);
     loadReleases(ctx, repo.id).then((list) => {
       rows = list.slice(0, Number(cfg.limit) || 10);
       if (!rows.length) return noData(body, "This repository has no releases yet.");
@@ -684,7 +684,7 @@ function renderReleases(slot, cfg, ctx) {
       const horizontal = cfg.style !== "bar";
       const vals = rows.map((r) => (cfg.measure === "last_7_days" ? r.last_7_days ?? 0 : r.downloads));
       const height = horizontal ? Math.max(160, rows.length * 32 + 40) : 280;
-      setHTML(body, html`<div class="chart-box" style="height:${height}px"><canvas role="img" aria-label="${titleOf(cfg, ctx)}"></canvas></div>`);
+      setHTML(body, markup`<div class="chart-box" style="height:${height}px"><canvas role="img" aria-label="${titleOf(cfg, ctx)}"></canvas></div>`);
       chart(ctx, body.querySelector("canvas"), {
         type: "bar",
         data: { labels: rows.map((r) => r.tag), datasets: [{ label: unit, data: vals, backgroundColor: color, borderRadius: 4, borderSkipped: "start", maxBarThickness: horizontal ? 22 : 40 }] },
@@ -734,12 +734,12 @@ function renderTable(slot, cfg, ctx) {
       const vb = sortKey === "label" ? b.r.label.toLowerCase() : sortKey === "rel" ? b.rel?.published_at || "" : b[sortKey] ?? -1;
       return (va < vb ? -1 : va > vb ? 1 : 0) * dir;
     });
-    setHTML(body, html`<div class="table-wrap"><table class="data"><thead><tr>${cols.map(([k, label], i) => html`<th scope="col" class="${i && k !== "rel" ? "r" : ""}" aria-sort="${sortKey === k ? (dir < 0 ? "descending" : "ascending") : "none"}"><button type="button" class="sort" data-k="${k}">${label}${sortKey === k ? (dir < 0 ? " ↓" : " ↑") : ""}</button></th>`)}</tr></thead>
-      <tbody>${sorted.map((x) => html`<tr>
+    setHTML(body, markup`<div class="table-wrap"><table class="data"><thead><tr>${cols.map(([k, label], i) => markup`<th scope="col" class="${i && k !== "rel" ? "r" : ""}" aria-sort="${sortKey === k ? (dir < 0 ? "descending" : "ascending") : "none"}"><button type="button" class="sort" data-k="${k}">${label}${sortKey === k ? (dir < 0 ? " ↓" : " ↑") : ""}</button></th>`)}</tr></thead>
+      <tbody>${sorted.map((x) => markup`<tr>
         <td><div class="repo-cell"><span class="dot" style="background:${colors.get(x.r.id)}"></span><div><a href="${ctx.links ? repoHref(ctx, x.r) : x.r.url}" ${ctx.links ? "" : raw('target="_blank" rel="noopener"')}>${x.r.label}</a><small>${x.r.full_name} <a class="ext" href="${x.r.url}" target="_blank" rel="noopener" aria-label="${x.r.full_name} on GitHub" title="Open on GitHub">${icon("external")}</a></small></div></div></td>
         <td class="r">${fmt(x.total)}</td><td class="r">${x.gained == null ? "–" : "+" + fmt(x.gained)}</td><td class="r">${x.week == null ? "–" : "+" + fmt(x.week)}</td>
         <td class="r">${fmt(x.stars)}</td><td class="r">${fmt(x.forks)}</td>
-        <td>${x.rel ? html`<a href="${x.rel.html_url || x.r.url + "/releases"}" target="_blank" rel="noopener">${x.rel.tag}</a> <span class="muted">${x.rel.published_at ? timeAgo(x.rel.published_at) : ""}</span>` : html`<span class="muted">none</span>`}</td>
+        <td>${x.rel ? markup`<a href="${x.rel.html_url || x.r.url + "/releases"}" target="_blank" rel="noopener">${x.rel.tag}</a> <span class="muted">${x.rel.published_at ? timeAgo(x.rel.published_at) : ""}</span>` : markup`<span class="muted">none</span>`}</td>
       </tr>`)}</tbody></table></div>`);
     body.querySelectorAll("button.sort").forEach((b) => b.addEventListener("click", () => {
       if (sortKey === b.dataset.k) dir = -dir; else { sortKey = b.dataset.k; dir = b.dataset.k === "label" ? 1 : -1; }
@@ -753,8 +753,10 @@ function renderTable(slot, cfg, ctx) {
 /* note ---------------------------------------------------------------- */
 function renderNote(slot, cfg, ctx) {
   const body = shell(slot, cfg, ctx);
+  // nosemgrep: javascript.lang.security.html-in-template-string -- u is part of the esc()-escaped text and cannot contain " or <
   const text = esc(cfg.text || "").replace(/https:\/\/[^\s<]+[^\s<.,;:!?)]/g, (u) => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
-  setHTML(body, text ? raw(`<div class="note-text">${text}</div>`) : html`<p class="empty">Write something in this widget's settings.</p>`);
+  // nosemgrep: javascript.lang.security.html-in-template-string -- text is esc()-escaped; links are https URLs without quotes or <
+  setHTML(body, text ? raw(`<div class="note-text">${text}</div>`) : markup`<p class="empty">Write something in this widget's settings.</p>`);
 }
 
 /* repository header ------------------------------------------------------ */
@@ -776,21 +778,21 @@ function renderRepoHead(slot, cfg, ctx) {
   const periodWord = days ? rangeLabel(days).toLowerCase() : "since tracking started";
   const prevWord = days ? `the ${days === 365 ? "12 months" : days + " days"} before` : "";
   const rel = repo.latest_release;
-  setHTML(slot, html`<section class="pulse repo-head" aria-labelledby="t-${cfg.id}">
+  setHTML(slot, markup`<section class="pulse repo-head" aria-labelledby="t-${cfg.id}">
     <div class="pulse-figures">
       <div class="repo-name"><span class="dot" style="background:${color}" aria-hidden="true"></span><h1 id="t-${cfg.id}">${repo.label}</h1></div>
-      <div class="repo-sub"><a href="${repo.url}" target="_blank" rel="noopener">${repo.full_name} ${icon("external")}</a>${repo.hidden ? html` <span class="tag">hidden from visitors</span>` : ""}</div>
-      ${repo.description ? html`<p class="repo-desc">${repo.description}</p>` : ""}
+      <div class="repo-sub"><a href="${repo.url}" target="_blank" rel="noopener">${repo.full_name} ${icon("external")}</a>${repo.hidden ? markup` <span class="tag">hidden from visitors</span>` : ""}</div>
+      ${repo.description ? markup`<p class="repo-desc">${repo.description}</p>` : ""}
       <div class="pulse-total" style="font-size:clamp(46px,6vw,80px)">${fmt(repo.total)}</div>
       <div class="pulse-delta">
         <span>downloads, <strong>${gained == null ? "–" : "+" + fmt(gained)}</strong> ${periodWord}</span>
-        ${pct == null ? "" : html`<span><span class="${pct >= 0 ? "delta-up" : "delta-down"}">${pct >= 0 ? "▲" : "▼"} ${fmt1(Math.abs(pct))}%</span> compared with ${prevWord}</span>`}
+        ${pct == null ? "" : markup`<span><span class="${pct >= 0 ? "delta-up" : "delta-down"}">${pct >= 0 ? "▲" : "▼"} ${fmt1(Math.abs(pct))}%</span> compared with ${prevWord}</span>`}
       </div>
       <dl class="repo-facts">
         <div><dt>Stars</dt><dd>${fmt(repo.stars)}</dd></div>
         <div><dt>Forks</dt><dd>${fmt(repo.forks)}</dd></div>
         <div><dt>Releases</dt><dd>${fmt(repo.releases)}</dd></div>
-        <div><dt>Newest</dt><dd>${rel ? html`<a href="${rel.html_url || repo.url + "/releases"}" target="_blank" rel="noopener">${rel.tag}</a>` : "none"}</dd></div>
+        <div><dt>Newest</dt><dd>${rel ? markup`<a href="${rel.html_url || repo.url + "/releases"}" target="_blank" rel="noopener">${rel.tag}</a>` : "none"}</dd></div>
         <div><dt>Tracked since</dt><dd>${repo.trackedSince ? fmtDay(repo.trackedSince, { day: "numeric", month: "short", year: "numeric" }) : "not yet"}</dd></div>
       </dl>
     </div>
@@ -798,7 +800,7 @@ function renderRepoHead(slot, cfg, ctx) {
     <div class="pulse-foot"><span>New downloads per ${unit}</span><span>Updated ${timeAgo(repo.last_collected)}</span></div>
   </section>`);
   if (daily.values.every((v) => v == null)) {
-    setHTML(slot.querySelector(".pulse-chart"), html`<p class="empty">The pulse starts after two daily collections.</p>`);
+    setHTML(slot.querySelector(".pulse-chart"), markup`<p class="empty">The pulse starts after two daily collections.</p>`);
     return;
   }
   const fmtd = dateFormatter(by);
@@ -824,7 +826,7 @@ function renderRepoHead(slot, cfg, ctx) {
 
 /* releases over time ----------------------------------------------------- */
 function loading(slot, cfg, ctx) {
-  setHTML(shell(slot, cfg, ctx), html`<p class="empty"><span class="spinner"></span></p>`);
+  setHTML(shell(slot, cfg, ctx), markup`<p class="empty"><span class="spinner"></span></p>`);
 }
 
 function renderReleaseTime(slot, cfg, ctx) {
@@ -887,13 +889,13 @@ function renderFiles(slot, cfg, ctx) {
     const body = shell(slot, cfg, ctx);
     if (!list.length) { noData(body, "No release files yet."); return; }
     const allCounted = list.every((x) => x.counted);
-    const footnote = html`<p class="muted" style="font-size:13px;margin:10px 0 0">${allCounted ? "Every file counts towards the download totals." : "Only counted files add to the download totals. Change this under Admin, Repositories, Edit."}</p>`;
+    const footnote = markup`<p class="muted" style="font-size:13px;margin:10px 0 0">${allCounted ? "Every file counts towards the download totals." : "Only counted files add to the download totals. Change this under Admin, Repositories, Edit."}</p>`;
     if (asTable) {
-      setHTML(body, html`${tableHTML(["File", "Downloads", "Releases", "Counted"], list.map((x) => [x.name, x.downloads, x.releases, x.counted ? "yes" : html`<span class="muted">no</span>`]))}${footnote}`);
+      setHTML(body, markup`${tableHTML(["File", "Downloads", "Releases", "Counted"], list.map((x) => [x.name, x.downloads, x.releases, x.counted ? "yes" : markup`<span class="muted">no</span>`]))}${footnote}`);
       return;
     }
     const height = Math.max(140, list.length * 34 + 40);
-    setHTML(body, html`${allCounted ? "" : legendHTML([{ label: "Counted", color }, { label: "Not counted", color: pal.other }])}
+    setHTML(body, markup`${allCounted ? "" : legendHTML([{ label: "Counted", color }, { label: "Not counted", color: pal.other }])}
       <div class="chart-box" style="height:${height}px"><canvas role="img" aria-label="${titleOf(cfg, ctx)}"></canvas></div>${footnote}`);
     chart(ctx, body.querySelector("canvas"), {
       type: "bar",

@@ -15,8 +15,10 @@ def asset_counted(name: str, asset_filter: str) -> bool:
     includes, excludes = [], []
     for part in (asset_filter or "").replace(";", ",").split(","):
         part = part.strip()
-        if part.startswith("!") and part[1:].strip():
-            excludes.append(part[1:].strip().lower())
+        if part.startswith("!"):
+            # a lone "!" is ignored, as in db.glob_clause, so the totals and the file list agree
+            if part[1:].strip():
+                excludes.append(part[1:].strip().lower())
         elif part:
             includes.append(part.lower())
     low = name.lower()

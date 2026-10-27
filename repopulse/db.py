@@ -123,6 +123,7 @@ class Database:
         with self.connect() as con:
             con.executescript(SCHEMA)
             self._migrate(con)
+            # nosemgrep: python.lang.security.audit.formatted-sql-query, python.sqlalchemy.security.sqlalchemy-execute-raw-query -- SCHEMA_VERSION is an int constant; PRAGMA takes no parameters
             con.execute("PRAGMA user_version = %d" % SCHEMA_VERSION)
 
     @staticmethod

@@ -10,6 +10,8 @@
 
   Double-clicking install.bat runs this script with the default options.
 #>
+# Write-Host on purpose: this is an interactive installer and its coloured progress lines are for the person running it.
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '', Justification = 'Interactive installer output')]
 param(
   [switch]$Service,
   [switch]$RemoveService,
@@ -45,7 +47,7 @@ foreach ($candidate in @("py -3", "python", "python3")) {
     $extra = @($parts | Select-Object -Skip 1)
     $ok = & $parts[0] @extra -c "import sys; print(1 if sys.version_info >= (3, 9) else 0)" 2>$null
     if ("$ok".Trim() -eq "1") { $Py = $parts; break }
-  } catch { }
+  } catch { Write-Verbose "$candidate did not run: $_" }
 }
 if (-not $Py) {
   Write-Host "Python 3.9 or newer is needed. Install it from https://www.python.org/downloads/ (tick 'Add python.exe to PATH') and run this again." -ForegroundColor Yellow
@@ -75,6 +77,8 @@ Say "4/4  Admin account"
 $hasAdmin = & $VenvPy -c "from repopulse.config import load_config; from repopulse.db import Database; from repopulse.auth import user_count; print(user_count(Database(load_config().db_path)))"
 if ("$hasAdmin".Trim() -ne "0") {
   Write-Host "An admin account already exists. Change its password with: .venv\Scripts\python -m repopulse set-password"
+} elseif ([Console]::IsInputRedirected) {
+  Write-Host "Skipped (no console to type in). Create it later with: .venv\Scripts\python -m repopulse create-admin"
 } else {
   & $VenvPy -m repopulse create-admin
 }
