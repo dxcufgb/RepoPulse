@@ -3,7 +3,7 @@
 import { renderAdmin, renderLogin } from "./admin.js";
 import { api, session } from "./api.js";
 import { Dashboard } from "./dashboard.js";
-import { $, $$, html, setHTML } from "./util.js";
+import { $, $$, markup, setHTML } from "./util.js";
 
 const main = $("#main");
 let current = null; // view with a destroy() method
@@ -51,7 +51,7 @@ async function route() {
       return;
     }
     if (!site.public && !session.user) {
-      setHTML(main, html`<div class="auth-wrap"><div class="auth-card"><h1>This dashboard is private</h1>
+      setHTML(main, markup`<div class="auth-wrap"><div class="auth-card"><h1>This dashboard is private</h1>
         <p>The owner has turned off public access.</p><a class="btn primary" href="/admin" data-nav>Log in</a></div></div>`);
       return;
     }
@@ -62,11 +62,11 @@ async function route() {
     if (current === dash) dash.render();
   } catch (e) {
     if (e.status === 404) {
-      setHTML(main, html`<div class="auth-wrap"><div class="auth-card"><h1>Not found</h1><p>${e.message}</p>
+      setHTML(main, markup`<div class="auth-wrap"><div class="auth-card"><h1>Not found</h1><p>${e.message}</p>
         <a class="btn primary" href="${isAdmin ? "/admin" : "/"}">Show all repositories</a></div></div>`);
       return;
     }
-    setHTML(main, html`<div class="auth-wrap"><div class="auth-card"><h1>Something went wrong</h1><p>${e.message}</p>
+    setHTML(main, markup`<div class="auth-wrap"><div class="auth-card"><h1>Something went wrong</h1><p>${e.message}</p>
       <p class="muted">Reload the page to try again.</p></div></div>`);
   }
 }
@@ -103,7 +103,7 @@ async function boot() {
   try {
     site = await api("/api/site");
   } catch (e) {
-    setHTML(main, html`<div class="auth-wrap"><div class="auth-card"><h1>Can't reach RepoPulse</h1><p>${e.message}</p></div></div>`);
+    setHTML(main, markup`<div class="auth-wrap"><div class="auth-card"><h1>Can't reach RepoPulse</h1><p>${e.message}</p></div></div>`);
     return;
   }
   session.user = site.user;

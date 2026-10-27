@@ -38,7 +38,8 @@ included.
 2. Unzip RepoPulse somewhere permanent, for example `C:\RepoPulse`.
 3. Double-click **install.bat**. It creates a private Python environment in
    `.venv`, installs the two dependencies (Flask and Waitress), creates
-   `config.json` and asks for an admin username and password.
+   `config.json` and asks for an admin username and password (skipped when
+   it runs without a console to type in, as from a script).
 4. Double-click **run.bat** and open <http://localhost:8080/>.
 
 To start RepoPulse automatically with Windows (runs in the background through
@@ -191,11 +192,62 @@ run the installer again, start it.
   one address lock that address out for five minutes.
 - Admin requests need both the session cookie and a CSRF token; the page sends a
   strict Content-Security-Policy.
+- Changing a password (in Settings or with `set-password`) logs out every other
+  session of that account.
+- `serve` warns when it listens on a network address over plain HTTP: put it
+  behind a reverse proxy with https (see Configuration) or bind it to `127.0.0.1`.
 - The public dashboard can be switched off in Settings, which puts the whole
   page behind the login.
 
+## Development
+
+```bash
+python -m venv .venv && .venv/bin/pip install -r requirements.txt     # Windows: .venv\Scripts\pip
+.venv/bin/python -m unittest discover -s tests -t .                   # the tests (standard library unittest)
+.venv/bin/python -m repopulse serve --no-scheduler                    # run it without the daily collection
+```
+
+The tests need no network: GitHub is faked. Every push and pull request runs the GitHub Actions workflows in
+`.github/workflows/`:
+
+- **CI** (`ci.yml`): the tests on Python 3.9 and 3.13 on Linux and Windows, shellcheck, PSScriptAnalyzer on
+  `install.ps1`, a real `./install.sh --service` (systemd) and `.\install.ps1 -Service` (Task Scheduler) install
+  that must start and answer, and the release build.
+- **Security** (`security.yml`, also weekly): gitleaks over the whole history, Semgrep, and `pip-audit` on
+  `requirements.txt`. The same checks locally:
+
+  ```bash
+  gitleaks git --redact --log-opts="--full-history --diff-filter=tuxdb --diff-merges=first-parent HEAD" .
+  semgrep scan --metrics=off --error --severity WARNING --severity ERROR --config p/python --config p/javascript \
+    --config p/security-audit --config p/secrets --config p/github-actions --config r/bash
+  pip-audit -r requirements.txt
+  ```
+
+  A Semgrep false positive gets an inline `# nosemgrep: <rule-id>` (`// nosemgrep: <rule-id>` in JavaScript) with
+  the reason, on the line or the line before it.
+- **Workflow lint** (actionlint and zizmor) when `.github/` changes, and **Claude** reviews of pull requests.
+
+`main` is protected: changes go through a pull request with the checks green and are squash-merged.
+
+### Releasing
+
+Actions → **Release** → Run workflow → type the version (for example `1.2.0`; `1.2.0-rc.1` makes a pre-release).
+It runs the whole CI, builds `repopulse-<version>-linux.tar.gz` and `repopulse-<version>-windows.zip` (plus the
+same files as `repopulse-linux.tar.gz` / `repopulse-windows.zip`, so
+`https://github.com/dxcufgb/RepoPulse/releases/latest/download/repopulse-linux.tar.gz` is always the newest) with
+the version stamped in, and `SHA256SUMS.txt`, and publishes the release. Nobody edits the version in
+`repopulse/__init__.py` by hand. `scripts/build-release.sh dist 1.2.0` builds the same files locally.
+
+### The GitHub repository
+
+`scripts/setup-repo.sh` creates the GitHub repository (or re-applies its settings): it commits what is not committed
+yet, pushes `main`, sets the merge and security settings (secret scanning with push protection, Dependabot alerts
+and updates, private vulnerability reporting, CodeQL), creates the rulesets in `.github/` (protected `main`,
+protected `v*` tags) and starts the first release. It needs the GitHub CLI logged in with
+`gh auth login --scopes repo,workflow`; `--dry-run` shows what it would do and `--help` lists the options.
+
 ## Licences
 
-Included third-party files: Chart.js (MIT,
+RepoPulse is released under the MIT licence (`LICENSE`). Included third-party files: Chart.js (MIT,
 `repopulse/static/vendor/chart.js.LICENSE.md`), Bricolage Grotesque and
 Instrument Sans (SIL Open Font License, `repopulse/static/fonts/`).

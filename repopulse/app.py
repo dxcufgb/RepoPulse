@@ -60,6 +60,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
         PERMANENT_SESSION_LIFETIME=timedelta(days=30),
         MAX_CONTENT_LENGTH=2 * 1024 * 1024,
         JSON_SORT_KEYS=False,
+        BEHIND_PROXY=cfg.behind_proxy,
     )
     if cfg.behind_proxy:
         from werkzeug.middleware.proxy_fix import ProxyFix
@@ -120,6 +121,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
             resp.headers["Cache-Control"] = "no-store"
         return resp
 
+    # nosemgrep: python.lang.maintainability.useless-inner-function -- the decorator registers it with Flask
     @app.errorhandler(HTTPException)
     def http_error(exc: HTTPException):
         if request.path.startswith("/api/"):
@@ -127,6 +129,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
         return exc
 
     # ------------------------------------------------------------- frontend
+    # nosemgrep: python.lang.maintainability.useless-inner-function -- the decorator registers it with Flask
     @app.get("/")
     @app.get("/admin")
     @app.get("/admin/<path:_sub>")
@@ -134,6 +137,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
     def index(_sub=None):
         return send_from_directory(STATIC, "index.html", max_age=0)
 
+    # nosemgrep: python.lang.maintainability.useless-inner-function -- the decorator registers it with Flask
     @app.get("/static/<path:filename>")
     def static_files(filename):
         # App code is revalidated on every load so an update shows up at once;
@@ -141,11 +145,13 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
         age = 86400 if filename.startswith(("fonts/", "vendor/")) else 0
         return send_from_directory(STATIC, filename, max_age=age)
 
+    # nosemgrep: python.lang.maintainability.useless-inner-function -- the decorator registers it with Flask
     @app.get("/favicon.svg")
     def favicon():
         return send_from_directory(STATIC, "favicon.svg", max_age=86400)
 
     # ----------------------------------------------------------- public API
+    # nosemgrep: python.lang.maintainability.useless-inner-function -- the decorator registers it with Flask
     @app.get("/api/site")
     def site():
         settings = db.all_settings()
@@ -160,6 +166,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
             version=__version__,
         )
 
+    # nosemgrep: python.lang.maintainability.useless-inner-function -- the decorator registers it with Flask
     @app.get("/api/dashboard")
     def dashboard():
         if not can_view():
@@ -170,6 +177,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
         data["repo_layout"] = db.get_setting("repo_layout", None)
         return jsonify(data)
 
+    # nosemgrep: python.lang.maintainability.useless-inner-function -- the decorator registers it with Flask
     @app.get("/api/repos/<int:repo_id>/page")
     def repo_page(repo_id: int):
         """Everything a repository page needs besides the overview data."""
@@ -188,6 +196,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
                        releases=stats.releases(db, row),
                        release_history=stats.release_history(db, row))
 
+    # nosemgrep: python.lang.maintainability.useless-inner-function -- the decorator registers it with Flask
     @app.get("/api/repos/<int:repo_id>/releases")
     def repo_releases(repo_id: int):
         if not can_view():
@@ -197,6 +206,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
             return jsonify(error="Unknown repository"), 404
         return jsonify(releases=stats.releases(db, row))
 
+    # nosemgrep: python.lang.maintainability.useless-inner-function -- the decorator registers it with Flask
     @app.get("/api/export.csv")
     def export():
         if not can_view():
@@ -207,6 +217,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
             "Content-Disposition": f'attachment; filename="repopulse-{stamp}.csv"'})
 
     # ----------------------------------------------------------------- auth
+    # nosemgrep: python.lang.maintainability.useless-inner-function -- the decorator registers it with Flask
     @app.post("/api/auth/login")
     def login():
         ip = request.remote_addr or "?"
@@ -223,11 +234,13 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
         db.execute("UPDATE users SET last_login = ? WHERE id = ?", (now_iso(), user["id"]))
         return jsonify(user=user["username"], csrf=token)
 
+    # nosemgrep: python.lang.maintainability.useless-inner-function -- the decorator registers it with Flask
     @app.post("/api/auth/logout")
     def logout():
         session.clear()
         return jsonify(ok=True)
 
+    # nosemgrep: python.lang.maintainability.useless-inner-function -- the decorator registers it with Flask
     @app.post("/api/auth/setup")
     def setup():
         if auth.user_count(db) > 0:
@@ -328,6 +341,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
             if flag in data:
                 fields.append(f"{flag} = ?"); params.append(1 if data[flag] else 0)
         if fields:
+            # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query -- column names are fixed literals above; values are ? parameters
             db.execute(f"UPDATE repos SET {', '.join(fields)} WHERE id = ?", [*params, repo_id])
         return jsonify(repo=admin_repo(repo_or_404(repo_id)))
 
@@ -482,6 +496,10 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
         if problem:
             return jsonify(error=problem), 400
         auth.set_password(db, user["username"], str(data["new"]))
+        # Keep this session valid; every OTHER session's fingerprint no longer matches, so they drop.
+        fresh = db.query_one("SELECT password_hash FROM users WHERE id = ?", (session["uid"],))
+        if fresh is not None:
+            session["pv"] = auth.pw_fingerprint(fresh["password_hash"])
         return jsonify(ok=True)
 
     return app

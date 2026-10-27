@@ -30,6 +30,7 @@ def _bool(value) -> bool:
 class Config:
     host: str = "0.0.0.0"
     port: int = 8080
+    # nosemgrep: python.lang.maintainability.return-not-in-function -- a lambda, not a return statement
     data_dir: Path = field(default_factory=lambda: PROJECT_ROOT / "data")
     # Set to true when the server sits behind nginx/Caddy/IIS etc. so client IPs
     # and https are detected from X-Forwarded-* headers.

@@ -11,7 +11,8 @@ from typing import Any
 
 USER_AGENT = "RepoPulse-download-tracker"
 REPO_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
-NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
+# "." and ".." are not repository names; they would change the API path (/repos/owner/..).
+NAME_RE = re.compile(r"^(?!\.\.?$)[A-Za-z0-9._-]{1,100}$")
 
 
 class GitHubError(Exception):
@@ -62,6 +63,7 @@ class GitHubClient:
         if self.token:
             req.add_header("Authorization", f"Bearer {self.token}")
         try:
+            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected -- the configured GitHub API base URL plus fixed paths
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 headers = {k.lower(): v for k, v in resp.headers.items()}
                 body = resp.read().decode("utf-8")

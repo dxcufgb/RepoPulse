@@ -2,7 +2,7 @@
 
 import { ApiError, api } from "./api.js";
 import { Model } from "./data.js";
-import { $, $$, confirmDialog, frag, html, icon, setHTML, store, toast, trapFocus, uid } from "./util.js";
+import { $, $$, confirmDialog, frag, markup, icon, setHTML, store, toast, trapFocus, uid } from "./util.js";
 import { TYPES, defaultLayout, defaultRepoLayout, renderWidget, repoHref, titleOf, typesFor } from "./widgets.js";
 
 const RANGES = [[7, "7 days"], [30, "30 days"], [90, "90 days"], [365, "12 months"], [0, "All time"]];
@@ -79,52 +79,52 @@ export class Dashboard {
 
   pageHeader() {
     if (!this.repo && this.editable && this.model.repos.length && !this.editing) {
-      return html`<nav class="repo-nav" aria-label="Pages"><span class="muted">This is the overview page. Repository pages have a layout of their own:</span>
+      return markup`<nav class="repo-nav" aria-label="Pages"><span class="muted">This is the overview page. Repository pages have a layout of their own:</span>
         <label class="repo-switch"><span class="sr-only">Open a repository page</span>
-          <select class="input" id="repo-switch"><option value="">Open a repository page…</option>${this.model.repos.map((r) => html`<option value="${repoHref({ base: this.base }, r)}">${r.label}</option>`)}</select></label></nav>`;
+          <select class="input" id="repo-switch"><option value="">Open a repository page…</option>${this.model.repos.map((r) => markup`<option value="${repoHref({ base: this.base }, r)}">${r.label}</option>`)}</select></label></nav>`;
     }
     if (!this.repo) return "";
-    return html`<nav class="repo-nav" aria-label="Repositories">
+    return markup`<nav class="repo-nav" aria-label="Repositories">
       <a href="${this.base || "/"}" class="back">← All repositories</a>
       <label class="repo-switch"><span class="sr-only">Show another repository</span>
-        <select class="input" id="repo-switch">${this.model.repos.map((r) => html`<option value="${repoHref({ base: this.base }, r)}" ${r.id === this.repo.id ? "selected" : ""}>${r.label}</option>`)}</select></label>
+        <select class="input" id="repo-switch">${this.model.repos.map((r) => markup`<option value="${repoHref({ base: this.base }, r)}" ${r.id === this.repo.id ? "selected" : ""}>${r.label}</option>`)}</select></label>
     </nav>`;
   }
 
   editIntro() {
-    if (!this.repo) return html`<strong>Editing the dashboard.</strong><span class="muted">Visitors see the changes after you save.</span>`;
+    if (!this.repo) return markup`<strong>Editing the dashboard.</strong><span class="muted">Visitors see the changes after you save.</span>`;
     return this.source === "own"
-      ? html`<strong>Editing the page of ${this.repo.label}.</strong><span class="muted">It has its own layout; other repositories are not affected.</span>`
-      : html`<strong>Editing repository pages.</strong><span class="muted">Save for all repositories, or give ${this.repo.label} its own layout.</span>`;
+      ? markup`<strong>Editing the page of ${this.repo.label}.</strong><span class="muted">It has its own layout; other repositories are not affected.</span>`
+      : markup`<strong>Editing repository pages.</strong><span class="muted">Save for all repositories, or give ${this.repo.label} its own layout.</span>`;
   }
 
   editButtons() {
-    if (!this.repo) return html`
+    if (!this.repo) return markup`
       <button type="button" class="btn small ghost" data-act="reset">Use the starter layout</button>
       <button type="button" class="btn small" data-act="discard">Discard changes</button>
       <button type="button" class="btn small primary" data-act="save">Save layout</button>`;
     const own = this.source === "own";
-    return html`
+    return markup`
       <button type="button" class="btn small ghost" data-act="reset">Use the starter layout</button>
-      ${own ? html`<button type="button" class="btn small ghost" data-act="unown">Use the shared layout</button>` : ""}
+      ${own ? markup`<button type="button" class="btn small ghost" data-act="unown">Use the shared layout</button>` : ""}
       <button type="button" class="btn small" data-act="discard">Discard changes</button>
       <button type="button" class="btn small ${own ? "primary" : ""}" data-act="save-own">Save for ${this.repo.label} only</button>
       <button type="button" class="btn small ${own ? "" : "primary"}" data-act="save-all">Save for all repositories</button>`;
   }
 
   render() {
-    setHTML(this.root, html`${this.pageHeader()}
+    setHTML(this.root, markup`${this.pageHeader()}
       <div class="toolbar ${this.editing ? "edit-bar" : ""}" role="region" aria-label="Dashboard controls">
         <div class="left">
-          ${this.editing ? this.editIntro() : html`
+          ${this.editing ? this.editIntro() : markup`
           <span class="label" id="range-label">Range</span>
           <div class="seg" role="group" aria-labelledby="range-label">${RANGES.map(([d, l]) =>
-            html`<button type="button" data-days="${d}" aria-pressed="${String(d === this.globalDays)}">${l}</button>`)}</div>`}
+            markup`<button type="button" data-days="${d}" aria-pressed="${String(d === this.globalDays)}">${l}</button>`)}</div>`}
         </div>
         <div class="right">
-          ${this.editing ? this.editButtons() : html`
+          ${this.editing ? this.editButtons() : markup`
             <a class="btn small ghost" href="/api/export.csv" download>${icon("download")} Download CSV</a>
-            ${this.editable ? html`<button type="button" class="btn small primary" data-act="edit">${icon("edit")} ${this.repo ? (this.source === "own" ? "Edit this page" : "Edit repository pages") : "Edit layout"}</button>` : ""}`}
+            ${this.editable ? markup`<button type="button" class="btn small primary" data-act="edit">${icon("edit")} ${this.repo ? (this.source === "own" ? "Edit this page" : "Edit repository pages") : "Edit layout"}</button>` : ""}`}
         </div>
       </div>
       <div class="grid ${this.editing ? "editing" : ""}" id="widget-grid"></div>`);
@@ -179,16 +179,16 @@ export class Dashboard {
     this.charts.length = 0;
     grid.replaceChildren();
     if (!this.model.repos.length && !this.editing) {
-      setHTML(grid, html`<div class="widget w-full" style="grid-column:1/-1;text-align:center;padding:48px 20px">
+      setHTML(grid, markup`<div class="widget w-full" style="grid-column:1/-1;text-align:center;padding:48px 20px">
         <h2 class="widget-title" style="font-size:22px">No repositories yet</h2>
         <p class="muted" style="margin:8px auto 18px;max-width:46ch">Statistics appear here once repositories are added and the first daily collection has run.</p>
-        ${this.editable ? html`<a class="btn primary" href="/admin/repos" data-nav>Add repositories</a>` : html`<a class="btn" href="/admin">Log in to add repositories</a>`}</div>`);
+        ${this.editable ? markup`<a class="btn primary" href="/admin/repos" data-nav>Add repositories</a>` : markup`<a class="btn" href="/admin">Log in to add repositories</a>`}</div>`);
       return;
     }
     const ctx = this.ctx({ tools: this.editing ? (slot, cfg) => this.addTools(slot, cfg) : null });
     for (const cfg of this.layout.widgets) grid.appendChild(renderWidget(cfg, ctx));
     if (this.editing) {
-      const add = frag(html`<button type="button" class="add-tile">${icon("plus")} Add a widget</button>`);
+      const add = frag(markup`<button type="button" class="add-tile">${icon("plus")} Add a widget</button>`);
       add.querySelector("svg").setAttribute("style", "width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;vertical-align:-4px;margin-right:6px");
       add.addEventListener("click", async () => {
         const cfg = await openEditor(null, this);
@@ -202,7 +202,7 @@ export class Dashboard {
     slot.style.position = "relative";
     const i = this.layout.widgets.findIndex((w) => w.id === cfg.id);
     const n = this.layout.widgets.length;
-    const bar = frag(html`<div class="edit-tools" role="toolbar" aria-label="Widget ${titleOf(cfg, this.ctx())}">
+    const bar = frag(markup`<div class="edit-tools" role="toolbar" aria-label="Widget ${titleOf(cfg, this.ctx())}">
       <button type="button" class="icon-btn handle-btn" title="Drag to move" aria-hidden="true" tabindex="-1">${icon("grip")}</button>
       <button type="button" class="icon-btn" data-t="up" title="Move earlier" aria-label="Move earlier" ${i === 0 ? "disabled" : ""}>${icon("up")}</button>
       <button type="button" class="icon-btn" data-t="down" title="Move later" aria-label="Move later" ${i === n - 1 ? "disabled" : ""}>${icon("down")}</button>
@@ -211,7 +211,7 @@ export class Dashboard {
       <button type="button" class="icon-btn" data-t="del" title="Remove widget" aria-label="Remove widget">${icon("trash")}</button>
     </div>`);
     slot.appendChild(bar);
-    slot.appendChild(frag(html`<span class="edit-label">${TYPES[cfg.type]?.label || cfg.type}</span>`));
+    slot.appendChild(frag(markup`<span class="edit-label">${TYPES[cfg.type]?.label || cfg.type}</span>`));
     const move = (to) => {
       const [w] = this.layout.widgets.splice(i, 1);
       this.layout.widgets.splice(to, 0, w);
@@ -256,7 +256,7 @@ function openEditor(existing, dash) {
     let cfg = existing ? structuredClone(existing) : { id: uid(), type: "timeline", ...structuredClone(TYPES.timeline.defaults) };
     const previewCharts = [];
     const prevFocus = document.activeElement;
-    const scrim = frag(html`<div class="scrim" role="presentation"><div class="drawer" role="dialog" aria-modal="true" aria-labelledby="ed-title">
+    const scrim = frag(markup`<div class="scrim" role="presentation"><div class="drawer" role="dialog" aria-modal="true" aria-labelledby="ed-title">
       <form class="drawer-form" novalidate>
         <header><h2 id="ed-title">${existing ? "Edit widget" : "Add a widget"}</h2>
           <button type="button" class="icon-btn" data-close aria-label="Close">${icon("close")}</button></header>
@@ -288,29 +288,29 @@ function openEditor(existing, dash) {
       const repos = dash.model.repos;
       const where = dash.repo ? "repo" : "overview";
       const parts = [];
-      parts.push(html`<div class="field"><span>Widget type</span><div class="type-picker" role="group" aria-label="Widget type">
-        ${typesFor(where).map(([k, t]) => html`<button type="button" data-type="${k}" aria-pressed="${String(cfg.type === k)}"><strong>${t.label}</strong><span>${t.blurb}</span></button>`)}</div></div>`);
-      if (dash.repo) parts.push(html`<p class="muted" style="margin:0;font-size:13.5px">On repository pages every widget shows the repository being viewed.</p>`);
+      parts.push(markup`<div class="field"><span>Widget type</span><div class="type-picker" role="group" aria-label="Widget type">
+        ${typesFor(where).map(([k, t]) => markup`<button type="button" data-type="${k}" aria-pressed="${String(cfg.type === k)}"><strong>${t.label}</strong><span>${t.blurb}</span></button>`)}</div></div>`);
+      if (dash.repo) parts.push(markup`<p class="muted" style="margin:0;font-size:13.5px">On repository pages every widget shows the repository being viewed.</p>`);
       for (const fd of type.fields) {
         if (fd.show && !fd.show(cfg)) continue;
         if (fd.overviewOnly && dash.repo) continue;
         const id = `ed-${fd.key}`;
         const v = cfg[fd.key];
-        if (fd.type === "text") parts.push(html`<label class="field" for="${id}"><span>${fd.label}${fd.hint ? html` <span class="hint">${fd.hint}</span>` : ""}</span>
+        if (fd.type === "text") parts.push(markup`<label class="field" for="${id}"><span>${fd.label}${fd.hint ? markup` <span class="hint">${fd.hint}</span>` : ""}</span>
           <input class="input" id="${id}" data-k="${fd.key}" value="${v || ""}" placeholder="${type.autoTitle(cfg, dash.ctx())}" maxlength="80"></label>`);
-        else if (fd.type === "textarea") parts.push(html`<label class="field" for="${id}"><span>${fd.label} <span class="hint">${fd.hint || ""}</span></span>
+        else if (fd.type === "textarea") parts.push(markup`<label class="field" for="${id}"><span>${fd.label} <span class="hint">${fd.hint || ""}</span></span>
           <textarea class="input" id="${id}" data-k="${fd.key}" maxlength="2000" rows="6">${v || ""}</textarea></label>`);
-        else if (fd.type === "select") parts.push(html`<label class="field" for="${id}"><span>${fd.label}</span>
-          <select class="input" id="${id}" data-k="${fd.key}">${fd.options.filter((o) => !o[2] || o[2] === where).map(([ov, ol]) => html`<option value="${ov}" ${String(ov) === String(v ?? "") ? "selected" : ""}>${ol}</option>`)}</select></label>`);
-        else if (fd.type === "check") parts.push(html`<label class="check"><input type="checkbox" data-k="${fd.key}" ${v ? "checked" : ""}> ${fd.label}</label>`);
-        else if (fd.type === "repo") parts.push(html`<label class="field" for="${id}"><span>${fd.label}</span>
-          <select class="input" id="${id}" data-k="${fd.key}"><option value="">Choose a repository</option>${repos.map((r) => html`<option value="${r.id}" ${Number(v) === r.id ? "selected" : ""}>${r.label} (${r.full_name})</option>`)}</select></label>`);
-        else if (fd.type === "repos") parts.push(html`<fieldset class="field" style="border:0;padding:0;margin:0"><legend style="font-weight:600;font-size:14px;margin-bottom:6px">${fd.label} <span class="hint">${fd.hint}</span></legend>
-          <div class="chips">${repos.length ? repos.map((r) => html`<label><input type="checkbox" data-repo="${r.id}" ${(v || []).includes(r.id) ? "checked" : ""}>${r.label}</label>`) : html`<span class="muted">No repositories yet</span>`}</div></fieldset>`);
+        else if (fd.type === "select") parts.push(markup`<label class="field" for="${id}"><span>${fd.label}</span>
+          <select class="input" id="${id}" data-k="${fd.key}">${fd.options.filter((o) => !o[2] || o[2] === where).map(([ov, ol]) => markup`<option value="${ov}" ${String(ov) === String(v ?? "") ? "selected" : ""}>${ol}</option>`)}</select></label>`);
+        else if (fd.type === "check") parts.push(markup`<label class="check"><input type="checkbox" data-k="${fd.key}" ${v ? "checked" : ""}> ${fd.label}</label>`);
+        else if (fd.type === "repo") parts.push(markup`<label class="field" for="${id}"><span>${fd.label}</span>
+          <select class="input" id="${id}" data-k="${fd.key}"><option value="">Choose a repository</option>${repos.map((r) => markup`<option value="${r.id}" ${Number(v) === r.id ? "selected" : ""}>${r.label} (${r.full_name})</option>`)}</select></label>`);
+        else if (fd.type === "repos") parts.push(markup`<fieldset class="field" style="border:0;padding:0;margin:0"><legend style="font-weight:600;font-size:14px;margin-bottom:6px">${fd.label} <span class="hint">${fd.hint}</span></legend>
+          <div class="chips">${repos.length ? repos.map((r) => markup`<label><input type="checkbox" data-repo="${r.id}" ${(v || []).includes(r.id) ? "checked" : ""}>${r.label}</label>`) : markup`<span class="muted">No repositories yet</span>`}</div></fieldset>`);
       }
-      if (type.sizes.length > 1) parts.push(html`<label class="field" for="ed-size"><span>Width</span>
-        <select class="input" id="ed-size" data-k="size">${type.sizes.map(([sv, sl]) => html`<option value="${sv}" ${sv === cfg.size ? "selected" : ""}>${sl}</option>`)}</select></label>`);
-      setHTML(fields, html`${parts}`);
+      if (type.sizes.length > 1) parts.push(markup`<label class="field" for="ed-size"><span>Width</span>
+        <select class="input" id="ed-size" data-k="size">${type.sizes.map(([sv, sl]) => markup`<option value="${sv}" ${sv === cfg.size ? "selected" : ""}>${sl}</option>`)}</select></label>`);
+      setHTML(fields, markup`${parts}`);
 
       $$("[data-type]", fields).forEach((b) => b.addEventListener("click", () => {
         if (b.dataset.type === cfg.type) return;

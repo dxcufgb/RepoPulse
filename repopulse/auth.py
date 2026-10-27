@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import functools
+import hashlib
 import secrets
 import threading
 import time
@@ -13,6 +14,12 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from .db import Database
 
 MIN_PASSWORD = 8
+
+
+def pw_fingerprint(password_hash: str) -> str:
+    """Short, non-reversible tag of the stored hash. Put in the session so that changing the
+    password invalidates every other session (the signed cookie's tag stops matching the DB)."""
+    return hashlib.sha256((password_hash or "").encode("utf-8")).hexdigest()[:16]
 
 
 def hash_password(password: str) -> str:
@@ -91,6 +98,7 @@ def start_session(user, remember: bool) -> str:
     session["uid"] = user["id"]
     session["user"] = user["username"]
     session["csrf"] = secrets.token_urlsafe(32)
+    session["pv"] = pw_fingerprint(user["password_hash"])
     session.permanent = bool(remember)
     return session["csrf"]
 
@@ -100,7 +108,16 @@ def current_user() -> str | None:
 
 
 def is_local_request() -> bool:
-    return (request.remote_addr or "") in {"127.0.0.1", "::1", "localhost"}
+    if (request.remote_addr or "") not in {"127.0.0.1", "::1", "localhost"}:
+        return False
+    # A loopback remote_addr behind an *unconfigured* reverse proxy (behind_proxy off, so ProxyFix is
+    # not applied) would otherwise mark every forwarded request "local". If forwarding headers are
+    # present but the app was not told it sits behind a proxy, do not trust the address.
+    if not current_app.config.get("BEHIND_PROXY") and (
+        request.headers.get("X-Forwarded-For") or request.headers.get("X-Real-IP")
+    ):
+        return False
+    return True
 
 
 def admin_required(view):
@@ -111,7 +128,8 @@ def admin_required(view):
         if not session.get("uid"):
             return jsonify(error="Please log in"), 401
         db: Database = current_app.extensions["repopulse"].db
-        if not db.query_one("SELECT 1 FROM users WHERE id = ?", (session["uid"],)):
+        row = db.query_one("SELECT password_hash FROM users WHERE id = ?", (session["uid"],))
+        if row is None or session.get("pv") != pw_fingerprint(row["password_hash"]):
             session.clear()
             return jsonify(error="Please log in"), 401
         if request.method not in ("GET", "HEAD", "OPTIONS"):
