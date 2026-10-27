@@ -198,13 +198,13 @@ fi
 run gh repo edit "$FULL" \
   --description "$DESCRIPTION" \
   --default-branch main \
-  --enable-issues --enable-projects --enable-wiki \
-  --enable-squash-merge --squash-merge-commit-message default \
-  --enable-merge-commit=false --enable-rebase-merge=false \
-  --enable-auto-merge --delete-branch-on-merge \
+  --enable-issues --enable-projects --enable-wiki=false \
+  --enable-squash-merge --enable-merge-commit=false --enable-rebase-merge=false \
+  --enable-auto-merge=false --delete-branch-on-merge \
   "${EDIT_ARGS[@]}"
-run gh api -X PATCH "repos/$FULL" --silent -F allow_update_branch=false \
-  -f squash_merge_commit_title=COMMIT_OR_PR_TITLE -f squash_merge_commit_message=COMMIT_MESSAGES
+# squash commits are titled and described from the pull request; "Update branch" is offered on pull requests
+run gh api -X PATCH "repos/$FULL" --silent -F allow_update_branch=true \
+  -f squash_merge_commit_title=PR_TITLE -f squash_merge_commit_message=PR_BODY
 # Actions may run, use any action (they are pinned by commit in the workflows), and GITHUB_TOKEN is read-only by
 # default (each workflow asks for what it needs) and cannot approve pull requests.
 run gh api -X PUT "repos/$FULL/actions/permissions" --silent -F enabled=true -f allowed_actions=all

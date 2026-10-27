@@ -1,0 +1,240 @@
+# Runs on every push and pull request, and as the "ci" job of release.yml (workflow_call) before anything is published:
+#   - the unit tests (standard library unittest) on the oldest and newest supported Python, on Linux and Windows
+#   - shellcheck on the Linux scripts, PSScriptAnalyzer and a parse check on install.ps1
+#   - a real ./install.sh --service on the Ubuntu runner (systemd) and .\install.ps1 -Service on the Windows runner
+#     (Task Scheduler): RepoPulse must start and answer, and the service must go away again
+#   - the release build (scripts/build-release.sh): the archives, the stamped version, the checksums, reproducibility
+# The job names are required status checks (.github/ruleset-protect-main.json): keep them in step.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+# github.workflow is the caller's name when release.yml calls this file, so a release's CI run and a push's CI run on
+# the same ref never cancel each other
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python }}, ${{ matrix.os == 'windows-latest' && 'Windows' || 'Linux' }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the event's commit, not a ref that can move during the run (a release's tag)
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install the dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements.txt
+
+      - name: Byte-compile
+        run: python -m compileall -q repopulse tests
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -t . -v
+
+  shell:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the event's commit, not a ref that can move during the run (a release's tag)
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Shellcheck the scripts
+        run: shellcheck install.sh run.sh scripts/*.sh
+
+  powershell:
+    name: PSScriptAnalyzer
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the event's commit, not a ref that can move during the run (a release's tag)
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # PSScriptAnalyzer ships with the runner image; install.ps1 itself targets Windows PowerShell 5.1.
+      - name: Analyze the Windows scripts
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($file in Get-ChildItem *.ps1) {
+            $tokens = $null; $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors) { $errors | ForEach-Object { Write-Output "::error file=$($file.Name)::$_" }; $failed = $true }
+          }
+          $results = Get-ChildItem *.ps1 | ForEach-Object { Invoke-ScriptAnalyzer -Path $_.FullName -Severity Warning, Error }
+          $results | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
+          if ($results -or $failed) { exit 1 }
+
+  linux-install:
+    name: install.sh (systemd)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PORT: "8099"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the event's commit, not a ref that can move during the run (a release's tag)
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # with the system Python, like a real install; no terminal, so the admin account is skipped
+      - name: Install as a systemd service
+        run: ./install.sh --service --port "$PORT" < /dev/null
+
+      - name: RepoPulse answers
+        run: |
+          base="http://localhost:$PORT"
+          code=000
+          for _ in $(seq 1 30); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' "$base/" || true)"
+            [ "$code" = 200 ] && break
+            sleep 1
+          done
+          test "$code" = 200
+          systemctl is-active repopulse
+          grep -q "^User=$(id -un)$" /etc/systemd/system/repopulse.service
+          # the first-run setup is offered on the server itself, the admin API needs a login
+          curl -sf "$base/api/site" | jq -e '.needs_setup and .setup_allowed and (.version | length > 0)'
+          test "$(curl -s -o /dev/null -w '%{http_code}' "$base/api/admin/repos")" = 401
+          curl -sf "$base/api/dashboard" > /dev/null
+          # the service, running as this user, created the database in the folder's own data/
+          test -f data/repopulse.db
+          test "$(stat -c %U data/repopulse.db)" = "$(id -un)"
+          .venv/bin/python -m repopulse status
+
+      - name: Running the installer again keeps the configuration
+        run: |
+          ./install.sh < /dev/null
+          python3 -c 'import json, os; assert json.load(open("config.json"))["port"] == int(os.environ["PORT"])'
+
+      - name: Remove the service
+        run: |
+          ./install.sh --remove-service
+          test ! -e /etc/systemd/system/repopulse.service
+          if systemctl is-active --quiet repopulse; then echo "repopulse still runs"; exit 1; fi
+          test -f data/repopulse.db
+
+  windows-install:
+    name: install.ps1 (Task Scheduler)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      PORT: "8099"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the event's commit, not a ref that can move during the run (a release's tag)
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      # Windows PowerShell 5.1, as install.bat runs it; its input is a pipe, so the admin account is skipped
+      - name: Install as a startup task
+        shell: powershell
+        run: |
+          '' | powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Service -OpenFirewall -Port $env:PORT
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: RepoPulse answers
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = "http://localhost:$env:PORT"
+          $ok = $false
+          foreach ($i in 1..45) {
+            try { if ((Invoke-WebRequest -UseBasicParsing "$base/").StatusCode -eq 200) { $ok = $true; break } } catch { Start-Sleep -Seconds 1 }
+          }
+          if (-not $ok) { Get-ScheduledTask -TaskName RepoPulse | Get-ScheduledTaskInfo | Format-List | Out-String | Write-Output; throw "RepoPulse did not answer on $base" }
+          if ((Get-ScheduledTask -TaskName RepoPulse).State -ne 'Running') { throw "the RepoPulse task is not running" }
+          if (-not (Get-NetFirewallRule -DisplayName RepoPulse -ErrorAction SilentlyContinue)) { throw "no firewall rule" }
+          $site = Invoke-RestMethod "$base/api/site"
+          if (-not ($site.needs_setup -and $site.setup_allowed)) { throw "the first-run setup is not offered on the server itself" }
+          try { Invoke-WebRequest -UseBasicParsing "$base/api/admin/repos" | Out-Null; throw "the admin API answered without a login" }
+          catch { if ($_.Exception.Response.StatusCode.value__ -ne 401) { throw } }
+          if (-not (Test-Path data\repopulse.db)) { throw "no database in data\" }
+
+      - name: Remove the startup task
+        shell: powershell
+        run: |
+          '' | powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -RemoveService
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: The task and the firewall rule are gone
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Get-ScheduledTask -TaskName RepoPulse -ErrorAction SilentlyContinue) { throw "the RepoPulse task is still there" }
+          if (Get-NetFirewallRule -DisplayName RepoPulse -ErrorAction SilentlyContinue) { throw "the firewall rule is still there" }
+          if (-not (Test-Path data\repopulse.db)) { throw "the data was removed" }
+
+  release-build:
+    name: Release build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the event's commit, not a ref that can move during the run (a release's tag)
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Build the archives twice
+        run: |
+          ./scripts/build-release.sh "$RUNNER_TEMP/a" 9.8.7
+          ./scripts/build-release.sh "$RUNNER_TEMP/b" 9.8.7
+          diff -r "$RUNNER_TEMP/a" "$RUNNER_TEMP/b"
+
+      - name: Check the files
+        run: |
+          cd "$RUNNER_TEMP/a"
+          sha256sum --check --strict SHA256SUMS.txt
+          test "$(awk '{print $2}' SHA256SUMS.txt | sort | tr '\n' ' ')" = \
+            "repopulse-9.8.7-linux.tar.gz repopulse-9.8.7-windows.zip repopulse-linux.tar.gz repopulse-windows.zip "
+          tar -tzf repopulse-9.8.7-linux.tar.gz > tar.txt
+          unzip -Z1 repopulse-9.8.7-windows.zip > zip.txt
+          for list in tar.txt zip.txt; do
+            grep -qx 'repopulse-9.8.7/install.sh' "$list"
+            grep -qx 'repopulse-9.8.7/repopulse/static/vendor/chart.umd.min.js' "$list"
+            if grep -E '/(tests|scripts|\.github|data)/|/config\.json$|/CLAUDE\.md$' "$list"; then
+              echo "::error::repository tooling or local data in $list"
+              exit 1
+            fi
+          done
+          tar -xzf repopulse-9.8.7-linux.tar.gz
+          grep -qx '__version__ = "9.8.7"' repopulse-9.8.7/repopulse/__init__.py
+          grep -q '?v=9.8.7' repopulse-9.8.7/repopulse/static/index.html
+          test -x repopulse-9.8.7/install.sh
+
+      - name: Release notes header
+        run: ./scripts/release-notes.sh 9.8.7 "$GITHUB_REPOSITORY" | grep -q 'repopulse-9.8.7-linux.tar.gz'

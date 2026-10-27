@@ -59,7 +59,8 @@ def load_config() -> Config:
     raw: dict = {}
     if CONFIG_FILE.exists():
         try:
-            raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            # utf-8-sig: Windows PowerShell 5.1 (install.ps1 -Port) and older Notepad save it with a BOM
+            raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError) as exc:  # pragma: no cover - user error
             raise SystemExit(f"Could not read {CONFIG_FILE}: {exc}")
 

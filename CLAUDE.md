@@ -27,6 +27,10 @@ single-page frontend without a build step. Python 3.9+; runtime dependencies are
 - `repopulse/stats.py` — read-side queries for the dashboard and the CSV export.
 - `repopulse/static/` — the frontend (ES modules, `markup`` ` templates in `js/util.js`), vendored fonts and Chart.js.
 - `install.sh`, `install.ps1` (+ `install.bat`), `run.sh`, `run.bat` — install and start.
+- `.github/` — workflows (`ci.yml`, `security.yml`, `release.yml`, `workflow-lint.yml`, `claude.yml`), the rulesets
+  (`ruleset-protect-main.json`, `ruleset-protect-release-tags.json`), Dependabot, issue/PR templates, `SECURITY.md`;
+  the same set-up as the other dxcufgb repositories. `.coderabbit.yaml` — CodeRabbit path instructions.
+- `docs/` — the README's logo and screenshots (made-up example repositories; not part of the release archives).
 
 ## Conventions
 
