@@ -1,0 +1,34 @@
+# CodeRabbit settings for RepoPulse.
+# Shared rules come from the central dxcufgb/coderabbit repository (inheritance: true), and CodeRabbit reads
+# CLAUDE.md (and its Review focus) as code guidelines. Only what is specific to this repository is here.
+# Paths here must not repeat a central path (scripts/**/*.js, .github/workflows/**, **/*.sh, **/*.ps1, **/*.iss,
+# module.json, **/*.md): an entry with the same path replaces the central one instead of adding to it.
+# Check the merged result on a pull request with: @coderabbitai configuration
+inheritance: true
+
+reviews:
+  path_instructions:
+    - path: "repopulse/app.py"
+      instructions: |
+        Every /api/admin/ route has @auth.admin_required, and changes need the X-CSRF-Token header. Request bodies are
+        user input: validate types and lengths. Repository names pass parse_repo (no . or ..), owners
+        ^[A-Za-z0-9-]{1,39}$. The GitHub token never appears in a response (only github_token_hint). Keep the security
+        headers and the CSP ('self' plus GitHub avatars). Behaviour changes need a test and a README update.
+    - path: "repopulse/auth.py"
+      instructions: |
+        PBKDF2 password hashes; sessions carry the password fingerprint (pv), so changing a password ends every other
+        session. Login throttle after 5 failures. First-run setup only from the server itself (is_local_request)
+        unless allow_remote_setup; forwarded headers count only with behind_proxy (ProxyFix). Flag any loosening.
+    - path: "repopulse/{db,stats}.py"
+      instructions: |
+        SQL uses ? parameters. The few formatted statements use fixed column names only, annotated for Semgrep; flag
+        any user value that reaches an f-string or % formatting in SQL. Migrations must keep existing databases working.
+    - path: "repopulse/{github,collector}.py"
+      instructions: |
+        The GitHub token goes only to the configured API URL, as the Authorization header; never into a log line, an
+        exception message shown to users, or a URL. The collection must survive GitHub errors and rate limits.
+    - path: "repopulse/static/js/**"
+      instructions: |
+        Values reach HTML only through the markup`` template (escaped) or esc(); flag innerHTML with unescaped data.
+        Nothing is loaded from the internet (the CSP allows only 'self' plus GitHub avatars). No build step: plain ES
+        modules.
