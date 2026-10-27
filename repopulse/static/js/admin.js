@@ -1,0 +1,437 @@
+// Admin pages: login / first-run setup, repositories, collection log, settings.
+
+import { api, session } from "./api.js";
+import { Dashboard } from "./dashboard.js";
+import { $, $$, confirmDialog, dialog, fmt, fmtDateTime, html, icon, raw, setHTML, timeAgo, toast } from "./util.js";
+import { colorsFor, palette, repoHref } from "./widgets.js";
+
+const TABS = [["", "Dashboard layout"], ["repos", "Repositories"], ["collection", "Data collection"], ["settings", "Settings"]];
+
+/* ------------------------------------------------------------ login */
+export function renderLogin(main, site, onDone) {
+  if (site.needs_setup) {
+    if (!site.setup_allowed) {
+      setHTML(main, html`<div class="auth-wrap"><div class="auth-card">
+        <h1>Create the admin account</h1>
+        <p>For safety, the first admin account can only be created on the server itself. Open
+        <strong>http://localhost:${location.port || 80}/admin</strong> on that computer, or run this in the RepoPulse folder:</p>
+        <pre class="input" style="white-space:pre-wrap;font-size:13.5px">python -m repopulse create-admin</pre>
+        <p class="muted" style="margin-top:12px">On Windows use <code>.venv\\Scripts\\python</code>, on Linux <code>.venv/bin/python</code>.</p>
+      </div></div>`);
+      return;
+    }
+    setHTML(main, html`<div class="auth-wrap"><div class="auth-card">
+      <h1>Create the admin account</h1>
+      <p>This account manages the repositories and the dashboard. Visitors don't need one.</p>
+      <form id="setup-form" novalidate>
+        <label class="field"><span>Username</span><input class="input" name="username" autocomplete="username" required value="admin"></label>
+        <label class="field"><span>Password <span class="hint">at least 8 characters</span></span><input class="input" name="password" type="password" autocomplete="new-password" required minlength="8"></label>
+        <label class="field"><span>Repeat password</span><input class="input" name="repeat" type="password" autocomplete="new-password" required></label>
+        <p class="error-text" id="auth-error" role="alert" hidden></p>
+        <button class="btn primary" type="submit">Create account</button>
+      </form></div></div>`);
+    $("#setup-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const f = e.target, err = $("#auth-error");
+      err.hidden = true;
+      if (f.password.value !== f.repeat.value) { err.textContent = "The passwords don't match."; err.hidden = false; return; }
+      try {
+        const r = await api("/api/auth/setup", { method: "POST", body: { username: f.username.value, password: f.password.value } });
+        session.user = r.user; session.csrf = r.csrf; onDone();
+      } catch (ex) { err.textContent = ex.message; err.hidden = false; }
+    });
+    return;
+  }
+  setHTML(main, html`<div class="auth-wrap"><div class="auth-card">
+    <h1>Log in</h1>
+    <p>Log in to manage repositories and build the dashboard.</p>
+    <form id="login-form" novalidate>
+      <label class="field"><span>Username</span><input class="input" name="username" autocomplete="username" required></label>
+      <label class="field"><span>Password</span><input class="input" name="password" type="password" autocomplete="current-password" required></label>
+      <label class="check"><input type="checkbox" name="remember"> Keep me logged in for 30 days</label>
+      <p class="error-text" id="auth-error" role="alert" hidden></p>
+      <button class="btn primary" type="submit">Log in</button>
+    </form>
+    <p class="muted" style="margin:16px 0 0;font-size:13.5px">Forgot the password? Run <code>python -m repopulse set-password</code> on the server.</p>
+  </div></div>`);
+  $("#login-form [name=username]").focus();
+  $("#login-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target, err = $("#auth-error"), btn = $("button[type=submit]", f);
+    err.hidden = true; btn.disabled = true;
+    try {
+      const r = await api("/api/auth/login", { method: "POST", body: { username: f.username.value, password: f.password.value, remember: f.remember.checked } });
+      session.user = r.user; session.csrf = r.csrf; onDone();
+    } catch (ex) { err.textContent = ex.message; err.hidden = false; f.password.select(); }
+    finally { btn.disabled = false; }
+  });
+}
+
+/* ------------------------------------------------------------ shell */
+export async function renderAdmin(main, sub, navigate, slug = null) {
+  setHTML(main, html`
+    <div class="admin-head"><h1>Admin</h1>
+      <div class="row" style="align-items:center"><span class="muted">Logged in as ${session.user}</span>
+      <button type="button" class="btn small" id="logout">Log out</button></div></div>
+    <nav class="tabs" aria-label="Admin sections">${TABS.map(([k, l]) => html`<a href="/admin${k ? "/" + k : ""}" ${sub === k ? raw('aria-current="page"') : ""}>${l}</a>`)}</nav>
+    <div id="admin-body"><p class="muted">Loading…</p></div>`);
+  $("#logout").addEventListener("click", async () => {
+    await api("/api/auth/logout", { method: "POST" }).catch(() => {});
+    session.user = null; session.csrf = null;
+    navigate("/");
+  });
+  const body = $("#admin-body");
+  try {
+    if (sub === "repos") return await reposView(body);
+    if (sub === "collection") return await collectionView(body);
+    if (sub === "settings") return await settingsView(body);
+    const dash = new Dashboard(body, { editable: true, slug });
+    await dash.load();
+    dash.render();
+    return dash;
+  } catch (e) {
+    setHTML(body, html`<p class="error-text">${e.message}</p>`);
+  }
+}
+
+/* -------------------------------------------------- waiting for collection */
+let pollTimer = null;
+function waitForCollection(onDone, label = "Collecting from GitHub…") {
+  clearTimeout(pollTimer);
+  const banner = $("#collect-status");
+  if (banner) { banner.hidden = false; setHTML(banner, html`<span class="spinner"></span> ${label}`); }
+  const tick = async () => {
+    try {
+      const r = await api("/api/admin/runs");
+      if (r.busy) { pollTimer = setTimeout(tick, 1500); return; }
+      if (banner) banner.hidden = true;
+      const last = r.runs[0];
+      if (last) {
+        if (last.status === "ok") toast(`Collected ${last.repos_ok} ${last.repos_ok === 1 ? "repository" : "repositories"}`);
+        else toast(last.message ? last.message.split("\n")[0] : `Collection ${last.status}`, "error");
+      }
+      onDone && onDone(r);
+    } catch { pollTimer = setTimeout(tick, 3000); }
+  };
+  pollTimer = setTimeout(tick, 800);
+}
+
+/* ------------------------------------------------------- repositories */
+async function reposView(body) {
+  let repos = [];
+  const pal = palette();
+  setHTML(body, html`
+    <section class="panel" aria-labelledby="add-h">
+      <h2 id="add-h">Add repositories</h2>
+      <p class="lead">Paste one or more repositories as <strong>owner/name</strong> or GitHub links. Their release downloads are collected right away and then once a day.</p>
+      <form id="add-form" class="stack" novalidate>
+        <label class="field"><span class="sr-only">Repositories</span>
+          <textarea class="input" name="repos" rows="3" placeholder="octocat/Hello-World&#10;https://github.com/owner/another-repo"></textarea></label>
+        <details><summary class="muted" style="cursor:pointer">Count only some files</summary>
+          <label class="field" style="margin-top:10px"><span>Files to count <span class="hint">for example <code>*.zip</code> or <code>!module.json</code> to leave one out. Empty counts every file in a release.</span></span>
+          <input class="input" name="asset_filter" placeholder="*.zip" maxlength="200"></label></details>
+        <div class="row"><button class="btn primary" type="submit">${icon("plus")} Add and collect</button>
+          <button class="btn" type="button" id="discover-btn">Browse a user or organisation</button></div>
+        <p class="error-text" id="add-error" role="alert" hidden style="white-space:pre-line"></p>
+      </form>
+    </section>
+    <p class="callout info" id="collect-status" hidden style="margin-top:16px"></p>
+    <section class="panel" aria-labelledby="list-h">
+      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px">
+        <h2 id="list-h">Tracked repositories</h2>
+        <button class="btn small" type="button" id="collect-all">${icon("refresh")} Collect all now</button></div>
+      <p class="lead" style="margin-bottom:6px">Drag to change the order used on the dashboard. History starts on the day a repository is added: GitHub only reports running totals, not past days.</p>
+      <ul class="repo-list" id="repo-list"></ul>
+    </section>`);
+
+  const list = $("#repo-list");
+  const load = async () => {
+    const r = await api("/api/admin/repos");
+    repos = r.repos;
+    draw();
+    return r;
+  };
+  const draw = () => {
+    const colors = colorsFor(repos, pal);
+    if (!repos.length) { setHTML(list, html`<li class="empty">Nothing tracked yet. Add a repository above to start.</li>`); return; }
+    setHTML(list, html`${repos.map((r) => html`<li class="repo-item" data-id="${r.id}">
+      <button type="button" class="handle" title="Drag to reorder" aria-label="Reorder ${r.full_name}. Use arrow keys up and down.">${icon("grip")}</button>
+      <span class="swatch" style="background:${colors.get(r.id)}" aria-hidden="true"></span>
+      <div class="repo-main">
+        <div class="name">${r.label} ${r.label !== r.name ? html`<span class="muted" style="font-weight:400">${r.full_name}</span>` : ""}
+          ${!r.enabled ? html`<span class="tag">paused</span>` : ""} ${r.hidden ? html`<span class="tag">hidden</span>` : ""} ${r.own_layout ? html`<span class="tag">own page layout</span>` : ""}</div>
+        <div class="meta">
+          <span>${r.downloads == null ? "no data yet" : fmt(r.downloads) + " downloads"}</span>
+          <span>${fmt(r.stars ?? 0)} stars</span>
+          <span>${r.days} ${r.days === 1 ? "day" : "days"} of history</span>
+          ${r.asset_filter ? html`<span>counting ${r.asset_filter}</span>` : ""}
+          <span>${r.last_collected ? "collected " + timeAgo(r.last_collected) : "not collected yet"}</span>
+          <a href="${r.url}" target="_blank" rel="noopener">GitHub</a>
+        </div>
+        ${r.last_error ? html`<div class="error-text" style="font-size:13.5px;margin-top:3px">${r.last_error}</div>` : ""}
+      </div>
+      <div class="repo-actions">
+        <a class="btn small ghost" href="${repoHref({ base: "/admin" }, r)}">Page</a>
+        <button type="button" class="btn small" data-a="edit" aria-expanded="false">${icon("edit")} Edit</button>
+        <button type="button" class="btn small ghost" data-a="collect" title="Collect this repository now" aria-label="Collect ${r.full_name} now">${icon("refresh")}</button>
+        <button type="button" class="btn small ghost danger" data-a="delete" title="Remove" aria-label="Remove ${r.full_name}">${icon("trash")}</button>
+      </div>
+    </li>`)}`);
+  };
+
+  const editPanel = (r) => html`<div class="repo-edit">
+    <label class="field"><span>Name on the dashboard</span><input class="input" data-f="label" value="${r.label_custom}" placeholder="${r.name}" maxlength="80"></label>
+    <div class="field"><span>Colour</span><div class="row" style="align-items:center;gap:8px">
+      <input type="color" data-f="color" value="${r.color_custom || colorsFor([r], palette()).get(r.id)}" style="width:44px;height:36px;border:1px solid var(--line-strong);border-radius:8px;background:var(--panel);padding:2px">
+      <label class="check"><input type="checkbox" data-f="auto" ${r.color_custom ? "" : "checked"}> Automatic</label></div></div>
+    <label class="field"><span>Files to count <span class="hint">e.g. <code>*.zip</code>, empty = all</span></span><input class="input" data-f="asset_filter" value="${r.asset_filter}" placeholder="all files" maxlength="200"></label>
+    <div class="field"><span>Options</span>
+      <label class="switch"><input type="checkbox" data-f="enabled" ${r.enabled ? "checked" : ""}><span class="track"></span>Collect every day</label>
+      <label class="switch"><input type="checkbox" data-f="visible" ${r.hidden ? "" : "checked"}><span class="track"></span>Show on the public dashboard</label></div>
+    <div class="row" style="grid-column:1/-1"><button type="button" class="btn small primary" data-a="save">Save changes</button><button type="button" class="btn small ghost" data-a="cancel">Cancel</button></div>
+  </div>`;
+
+  list.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-a]");
+    if (!btn) return;
+    const item = btn.closest(".repo-item");
+    const r = repos.find((x) => x.id === Number(item.dataset.id));
+    const a = btn.dataset.a;
+    if (a === "edit") {
+      const open = item.querySelector(".repo-edit");
+      if (open) { open.remove(); btn.setAttribute("aria-expanded", "false"); return; }
+      item.insertAdjacentHTML("beforeend", editPanel(r).__raw);
+      btn.setAttribute("aria-expanded", "true");
+      $("[data-f=label]", item).focus();
+      $("[data-f=color]", item).addEventListener("input", () => { $("[data-f=auto]", item).checked = false; });
+    }
+    if (a === "cancel") { item.querySelector(".repo-edit").remove(); item.querySelector("[data-a=edit]").setAttribute("aria-expanded", "false"); }
+    if (a === "save") {
+      const g = (k) => $(`[data-f=${k}]`, item);
+      try {
+        const res = await api(`/api/admin/repos/${r.id}`, { method: "PATCH", body: {
+          label: g("label").value, color: g("auto").checked ? "" : g("color").value, asset_filter: g("asset_filter").value,
+          enabled: g("enabled").checked, hidden: !g("visible").checked } });
+        Object.assign(r, res.repo); draw(); toast("Saved");
+      } catch (ex) { toast(ex.message, "error"); }
+    }
+    if (a === "collect") {
+      try { await api("/api/admin/collect", { method: "POST", body: { repo_ids: [r.id] } }); waitForCollection(load, `Collecting ${r.full_name}…`); }
+      catch (ex) { toast(ex.message, "error"); }
+    }
+    if (a === "delete") {
+      if (!(await confirmDialog(`Remove ${r.full_name}?`, "Its whole download history is deleted from RepoPulse. To keep the history but stop collecting, use Edit and turn off Collect every day instead.", "Remove repository", true))) return;
+      try { await api(`/api/admin/repos/${r.id}`, { method: "DELETE" }); repos = repos.filter((x) => x !== r); draw(); toast(`Removed ${r.full_name}`); }
+      catch (ex) { toast(ex.message, "error"); }
+    }
+  });
+
+  // reordering: drag with the handle, or arrow keys on the handle
+  let dragId = null;
+  const saveOrder = () => api("/api/admin/repos/order", { method: "POST", body: { ids: repos.map((r) => r.id) } }).catch((ex) => toast(ex.message, "error"));
+  list.addEventListener("pointerdown", (e) => { const h = e.target.closest(".handle"); if (h) h.closest(".repo-item").draggable = true; });
+  list.addEventListener("dragstart", (e) => { const it = e.target.closest(".repo-item"); dragId = Number(it.dataset.id); it.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(dragId)); });
+  list.addEventListener("dragover", (e) => { e.preventDefault(); $$(".drop-before", list).forEach((x) => x.classList.remove("drop-before")); e.target.closest(".repo-item")?.classList.add("drop-before"); });
+  list.addEventListener("dragend", () => { $$(".repo-item", list).forEach((x) => { x.draggable = false; x.classList.remove("dragging", "drop-before"); }); });
+  list.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const target = e.target.closest(".repo-item");
+    if (!target || dragId == null) return;
+    const from = repos.findIndex((r) => r.id === dragId);
+    const [moved] = repos.splice(from, 1);
+    const to = repos.findIndex((r) => r.id === Number(target.dataset.id));
+    repos.splice(to < 0 ? repos.length : to, 0, moved);
+    draw(); saveOrder();
+  });
+  list.addEventListener("keydown", (e) => {
+    const h = e.target.closest(".handle");
+    if (!h || !["ArrowUp", "ArrowDown"].includes(e.key)) return;
+    e.preventDefault();
+    const id = Number(h.closest(".repo-item").dataset.id);
+    const i = repos.findIndex((r) => r.id === id), j = i + (e.key === "ArrowUp" ? -1 : 1);
+    if (j < 0 || j >= repos.length) return;
+    [repos[i], repos[j]] = [repos[j], repos[i]];
+    draw(); saveOrder();
+    $(`.repo-item[data-id="${id}"] .handle`, list).focus();
+  });
+
+  $("#add-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target, err = $("#add-error"), btn = $("button[type=submit]", f);
+    err.hidden = true;
+    const entries = f.repos.value.split(/[\s,]+/).filter(Boolean);
+    if (!entries.length) { err.textContent = "Enter at least one repository, like octocat/Hello-World."; err.hidden = false; f.repos.focus(); return; }
+    btn.disabled = true;
+    try {
+      const res = await api("/api/admin/repos", { method: "POST", body: { repos: entries, asset_filter: f.asset_filter.value } }).catch((ex) => ({ added: [], errors: [ex.message] }));
+      if (res.errors?.length) { err.textContent = res.errors.join("\n"); err.hidden = false; }
+      if (res.added?.length) {
+        f.repos.value = res.errors?.length ? f.repos.value : "";
+        toast(`Added ${res.added.length} ${res.added.length === 1 ? "repository" : "repositories"}`);
+        await load();
+        waitForCollection(load);
+      }
+    } finally { btn.disabled = false; }
+  });
+
+  $("#collect-all").addEventListener("click", async () => {
+    try { await api("/api/admin/collect", { method: "POST", body: {} }); waitForCollection(load); }
+    catch (ex) { toast(ex.message, "error"); }
+  });
+
+  $("#discover-btn").addEventListener("click", () => discoverDialog(async (picked) => {
+    const res = await api("/api/admin/repos", { method: "POST", body: { repos: picked, asset_filter: $("#add-form").asset_filter.value } });
+    toast(`Added ${res.added.length} ${res.added.length === 1 ? "repository" : "repositories"}`);
+    if (res.errors.length) toast(res.errors[0], "error");
+    await load(); waitForCollection(load);
+  }));
+
+  const r = await load();
+  if (r.busy) waitForCollection(load);
+}
+
+function discoverDialog(onAdd) {
+  let found = [];
+  return dialog({
+    title: "Browse a user or organisation",
+    body: html`<form id="disc-form" class="row" novalidate style="margin-bottom:12px">
+        <label class="field grow"><span>GitHub user or organisation</span><input class="input" name="owner" placeholder="octocat" autocomplete="off"></label>
+        <button class="btn" type="submit">Look up</button></form>
+      <div id="disc-result" class="muted">Public repositories are listed, most recently updated first.</div>`,
+    buttons: [{ label: "Cancel", value: false, cls: "ghost" }, { label: "Add selected", cls: "primary", value: async (root) => {
+      const picked = $$("#disc-result input:checked", root).map((x) => x.value);
+      if (!picked.length) { toast("Select at least one repository", "error"); return false; }
+      try { await onAdd(picked); return true; } catch (ex) { toast(ex.message, "error"); return false; }
+    } }],
+    onOpen: (root) => {
+      $("#disc-form", root).addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const out = $("#disc-result", root);
+        setHTML(out, html`<span class="spinner"></span> Looking up…`);
+        try {
+          found = (await api("/api/admin/discover", { method: "POST", body: { owner: e.target.owner.value } })).repos;
+          if (!found.length) { setHTML(out, html`No public repositories found.`); return; }
+          setHTML(out, html`<label class="check" style="margin-bottom:8px"><input type="checkbox" id="disc-all"> Select all except forks and archived repositories</label>
+            <div class="discover-list">${found.map((r) => html`<label><input type="checkbox" value="${r.full_name}" ${r.tracked ? "disabled checked" : ""} data-plain="${!r.fork && !r.archived}">
+              <span><strong>${r.full_name.split("/")[1]}</strong>${r.description ? html`<small>${r.description}</small>` : ""}</span>
+              <span class="muted" style="font-size:13px;white-space:nowrap">${r.tracked ? "tracked" : r.fork ? "fork" : r.archived ? "archived" : fmt(r.stars) + " ★"}</span></label>`)}</div>`);
+          $("#disc-all", root).addEventListener("change", (ev) => $$('.discover-list input:not(:disabled)[data-plain="true"]', root).forEach((x) => { x.checked = ev.target.checked; }));
+        } catch (ex) { setHTML(out, html`<span class="error-text">${ex.message}</span>`); }
+      });
+    },
+  });
+}
+
+/* --------------------------------------------------------- collection */
+async function collectionView(body) {
+  const draw = (r) => {
+    const last = r.runs[0];
+    setHTML(body, html`
+      <section class="panel">
+        <div class="cols-2">
+          <div><h2>Next automatic collection</h2><p class="lead" style="margin:4px 0 0;font-size:18px">${fmtDateTime(r.next_run)}</p>
+            <p class="muted" style="margin:4px 0 0">Change the time under Settings. If the server is off at that time, it collects as soon as it starts again.</p></div>
+          <div><h2>Last collection</h2><p class="lead" style="margin:4px 0 0;font-size:18px">${last ? fmtDateTime(last.started_at) : "Not run yet"}</p>
+            ${last ? html`<p style="margin:4px 0 0">${statusTag(last.status)} <span class="muted">${last.repos_ok} collected, ${last.repos_failed} failed</span></p>` : ""}</div>
+        </div>
+        <div class="row" style="margin-top:16px"><button class="btn primary" id="run-now" ${r.busy ? "disabled" : ""}>${icon("refresh")} Collect all now</button></div>
+      </section>
+      <p class="callout info" id="collect-status" ${r.busy ? "" : "hidden"} style="margin-top:16px">${r.busy ? html`<span class="spinner"></span> Collecting from GitHub…` : ""}</p>
+      <section class="panel"><h2>History</h2><p class="lead">The last 50 collections.</p>
+        ${r.runs.length ? html`<div class="table-wrap"><table class="data"><thead><tr><th>Started</th><th>Started by</th><th>Result</th><th class="r">Collected</th><th class="r">Failed</th><th class="r">Took</th><th>Details</th></tr></thead>
+        <tbody>${r.runs.map((x) => html`<tr><td>${fmtDateTime(x.started_at)}</td><td>${x.trigger}</td><td>${statusTag(x.status)}</td>
+          <td class="r">${x.repos_ok}</td><td class="r">${x.repos_failed}</td><td class="r">${x.finished_at ? Math.max(0, Math.round((new Date(x.finished_at) - new Date(x.started_at)) / 1000)) + " s" : "–"}</td>
+          <td style="max-width:420px;white-space:pre-line;font-size:13.5px" class="muted">${x.message || ""}</td></tr>`)}</tbody></table></div>` : html`<p class="empty">Nothing collected yet.</p>`}
+      </section>`);
+    $("#run-now").addEventListener("click", async () => {
+      try { await api("/api/admin/collect", { method: "POST", body: {} }); $("#run-now").disabled = true; waitForCollection(reload); }
+      catch (ex) { toast(ex.message, "error"); }
+    });
+  };
+  const reload = async () => { const r = await api("/api/admin/runs"); draw(r); if (r.busy) waitForCollection(reload); };
+  await reload();
+}
+
+function statusTag(s) {
+  const map = { ok: ["ok", "Succeeded"], partial: ["warn", "Partly failed"], failed: ["err", "Failed"], running: ["", "Running"] };
+  const [cls, label] = map[s] || ["", s];
+  return html`<span class="tag ${cls}">${label}</span>`;
+}
+
+/* ----------------------------------------------------------- settings */
+async function settingsView(body) {
+  const s = await api("/api/admin/settings");
+  setHTML(body, html`
+    <section class="panel"><h2>Dashboard</h2><p class="lead">What visitors see at the top of the page.</p>
+      <form id="f-site" class="stack" novalidate>
+        <div class="cols-2"><label class="field"><span>Title</span><input class="input" name="site_title" value="${s.site_title}" maxlength="80"></label>
+        <label class="field"><span>Subtitle</span><input class="input" name="site_subtitle" value="${s.site_subtitle}" maxlength="200"></label></div>
+        <label class="switch"><input type="checkbox" name="public_dashboard" ${s.public_dashboard ? "checked" : ""}><span class="track"></span>Anyone can view the dashboard without logging in</label>
+        <div><button class="btn primary" type="submit">Save dashboard settings</button></div>
+      </form></section>
+
+    <section class="panel"><h2>Daily collection</h2><p class="lead">RepoPulse asks GitHub for the download numbers once a day.</p>
+      <form id="f-collect" class="stack" novalidate>
+        <div class="cols-2">
+          <label class="field"><span>Time of day <span class="hint">server time (${s.timezone})</span></span><input class="input" type="time" name="collection_time" value="${s.collection_time}" required style="max-width:180px"></label>
+          <label class="field"><span>GitHub token <span class="hint">optional. Raises the limit from 60 to 5,000 requests an hour and allows private repositories.</span></span>
+            <input class="input" type="password" name="github_token" autocomplete="off" placeholder="${s.github_token_set ? "Saved (ends in " + s.github_token_hint + "). Type to replace." : "github_pat_…"}"></label>
+        </div>
+        <p class="muted" id="rate-line" style="margin:0">Checking the GitHub API limit…</p>
+        <p class="muted" style="margin:0;font-size:13.5px">A fine-grained token with read-only access to public repositories is enough. Create one on GitHub under Settings, Developer settings, Personal access tokens.</p>
+        <div class="row"><button class="btn primary" type="submit">Save collection settings</button>
+          ${s.github_token_set ? html`<button class="btn danger" type="button" id="rm-token">Remove token</button>` : ""}</div>
+      </form></section>
+
+    <div class="cols-2" style="margin-top:16px">
+      <section class="panel" style="margin:0"><h2>Password</h2><p class="lead">For the account ${s.user}.</p>
+        <form id="f-pass" class="stack" novalidate>
+          <input type="text" name="username" value="${s.user}" autocomplete="username" hidden>
+          <label class="field"><span>Current password</span><input class="input" type="password" name="current" autocomplete="current-password" required></label>
+          <label class="field"><span>New password <span class="hint">at least 8 characters</span></span><input class="input" type="password" name="new" autocomplete="new-password" required minlength="8"></label>
+          <div><button class="btn primary" type="submit">Change password</button></div>
+        </form></section>
+      <section class="panel" style="margin:0"><h2>Your data</h2><p class="lead">Everything is stored in one file on the server. Back it up to keep the history safe.</p>
+        <p style="margin:0 0 14px;word-break:break-all"><code>${s.server.db}</code></p>
+        <a class="btn" href="/api/export.csv" download>${icon("download")} Download all data as CSV</a>
+        <p class="muted" style="margin:14px 0 0;font-size:13.5px">RepoPulse ${s.version}, listening on port ${s.server.port}.</p>
+      </section>
+    </div>`);
+
+  api("/api/admin/rate-limit").then((r) => {
+    const line = $("#rate-line");
+    if (!line) return;
+    line.textContent = r.error ? `GitHub check failed: ${r.error}` :
+      `GitHub API: ${fmt(r.remaining)} of ${fmt(r.limit)} requests left this hour${r.authenticated ? " (using your token)" : " (no token)"}.`;
+  }).catch(() => {});
+
+  const save = async (payload, msg) => {
+    try { await api("/api/admin/settings", { method: "PUT", body: payload }); toast(msg); return true; }
+    catch (ex) { toast(ex.message, "error"); return false; }
+  };
+  $("#f-site").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    if (await save({ site_title: f.site_title.value, site_subtitle: f.site_subtitle.value, public_dashboard: f.public_dashboard.checked }, "Dashboard settings saved")) {
+      window.dispatchEvent(new CustomEvent("repopulse:site", { detail: { title: f.site_title.value, subtitle: f.site_subtitle.value } }));
+    }
+  });
+  $("#f-collect").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const payload = { collection_time: f.collection_time.value };
+    if (f.github_token.value.trim()) payload.github_token = f.github_token.value.trim();
+    if (await save(payload, "Collection settings saved")) settingsView(body);
+  });
+  $("#rm-token")?.addEventListener("click", async () => {
+    if (await confirmDialog("Remove the GitHub token?", "Collection falls back to 60 requests an hour, and private repositories can no longer be read.", "Remove token", true)) {
+      if (await save({ github_token: "" }, "Token removed")) settingsView(body);
+    }
+  });
+  $("#f-pass").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    try { await api("/api/admin/password", { method: "POST", body: { current: f.current.value, new: f.new.value } }); toast("Password changed"); f.reset(); }
+    catch (ex) { toast(ex.message, "error"); }
+  });
+}
