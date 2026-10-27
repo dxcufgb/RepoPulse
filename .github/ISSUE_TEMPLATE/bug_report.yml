@@ -1,0 +1,49 @@
+name: Bug report
+description: RepoPulse or one of its installers does not behave as expected.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: RepoPulse version
+      description: Shown at the bottom of Settings in the admin area, or by `python -m repopulse --version`.
+      placeholder: "1.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Linux, Raspberry Pi OS, Windows, macOS, Other]
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How it runs
+      options: [install.sh --service (systemd), ./run.sh, install.ps1 -Service (Task Scheduler), run.bat, Other]
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.11.2"
+  - type: input
+    id: browser
+    attributes:
+      label: Browser (for dashboard problems)
+      placeholder: "Firefox 140"
+  - type: textarea
+    id: log
+    attributes:
+      label: Log output
+      description: >-
+        `journalctl -u repopulse -n 50` (Linux service), the console of `run.sh` / `run.bat`, or the collection log in the
+        admin area. Remove your GitHub token before pasting.
+      render: text

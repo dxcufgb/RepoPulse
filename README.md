@@ -1,41 +1,87 @@
-# RepoPulse
+<p align="center">
+  <img src="docs/logo.svg" width="72" height="72" alt="">
+</p>
 
-A small self-hosted dashboard that tracks how often the releases of your GitHub
-repositories are downloaded. It collects the numbers once a day, keeps the
-history in a single SQLite file, and shows it on a public page with charts and
-tables. An admin area behind a login lets you add or remove repositories and
-build the dashboard from widgets.
+<h1 align="center">RepoPulse</h1>
 
-Runs on Windows and Linux (including a Raspberry Pi) with Python 3.9 or newer.
-Nothing is loaded from the internet by the page itself: fonts and Chart.js are
-included.
+<p align="center">
+  <strong>See how often your GitHub releases are downloaded, day by day.</strong><br>
+  A small self-hosted dashboard: one Python process, one SQLite file, no cloud service.
+</p>
+
+<p align="center">
+  <a href="https://github.com/dxcufgb/RepoPulse/actions/workflows/ci.yml"><img src="https://github.com/dxcufgb/RepoPulse/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/dxcufgb/RepoPulse/actions/workflows/security.yml"><img src="https://github.com/dxcufgb/RepoPulse/actions/workflows/security.yml/badge.svg?branch=main" alt="Security"></a>
+  <a href="https://github.com/dxcufgb/RepoPulse/releases/latest"><img src="https://img.shields.io/github/v/release/dxcufgb/RepoPulse?sort=semver" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/python-3.9%2B-3776ab" alt="Python 3.9+">
+  <img src="https://img.shields.io/badge/runs%20on-Linux%20%C2%B7%20Raspberry%20Pi%20%C2%B7%20Windows-555" alt="Runs on Linux, Raspberry Pi and Windows">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/dxcufgb/RepoPulse" alt="MIT licence"></a>
+</p>
+
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#first-steps">First steps</a> ·
+  <a href="#how-the-numbers-work">How the numbers work</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#development">Development</a>
+</p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/dashboard-dark.png">
+  <img src="docs/screenshots/dashboard-light.png" alt="The RepoPulse dashboard: total downloads with a daily pulse, single-number widgets, downloads over time and per repository">
+</picture>
+
+GitHub shows only a running total of downloads for each release file; it never tells you *when* they happened.
+RepoPulse asks GitHub once a day, keeps every day's numbers in a single SQLite file, and turns them into
+a public page with charts and tables: new downloads per day, which release people are moving to, which file they
+actually download. An admin area behind a login lets you add repositories and build the dashboard from widgets.
+
+It runs on Windows and Linux (including a Raspberry Pi) with Python 3.9 or newer, and needs only Flask and Waitress.
+The page loads nothing from the internet: fonts and Chart.js are included.
 
 ## What you get
 
-- **Public dashboard** with a range switch (7 days to all time), CSV download,
-  light and dark theme, and a layout that works on phones.
-- **Widgets you can arrange:** headline total with a daily pulse, single numbers
-  (new downloads, downloads per day, stars, forks, most downloaded repository…),
-  line, area and bar charts over time (per day, week or month, per repository or
-  combined), per-repository bars or ring charts, per-release charts for one
-  repository, sortable tables, and text notes. Every chart can switch to a
-  table view.
-- **A page per repository** with downloads per release tag, how each release is
-  picked up over time, downloads per file and more. Click any repository on the
-  dashboard to open it.
-- **Admin area** (login required): add repositories by name or link, browse
-  all public repositories of a user or organisation and pick several at once,
-  rename and recolour them, pause collection, hide them from the public page,
-  choose which release files count, reorder them, run a collection by hand,
-  see the collection log, change the collection time, GitHub token and password.
+- **Public dashboard** with a range switch (7 days to all time), CSV download, light and dark theme, and a layout
+  that works on phones.
+- **Widgets you can arrange:** headline total with a daily pulse, single numbers (new downloads, downloads per day,
+  stars, forks, most downloaded repository…), line, area and bar charts over time (per day, week or month, per
+  repository or combined), per-repository bars or ring charts, per-release charts for one repository, sortable
+  tables, and text notes. Every chart can switch to a table view.
+- **A page per repository** with downloads per release tag, how each release is picked up over time, downloads per
+  file and more. Click any repository on the dashboard to open it.
+- **Admin area** (login required): add repositories by name or link, browse all public repositories of a user or
+  organisation and pick several at once, rename and recolour them, pause collection, hide them from the public
+  page, choose which release files count, reorder them, run a collection by hand, see the collection log, change
+  the collection time, GitHub token and password.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/repository-light.png" alt="A repository page: header with totals, downloads per release and new downloads per release"></td>
+    <td width="50%"><img src="docs/screenshots/admin-dark.png" alt="The admin area: adding repositories and the list of tracked repositories"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>A repository page</sub></td>
+    <td align="center"><sub>The admin area (dark theme)</sub></td>
+  </tr>
+</table>
+
+<sub>The screenshots show made-up example repositories.</sub>
 
 ## Install
+
+Download the newest release (the links always point at the latest one; every release also lists versioned files and
+`SHA256SUMS.txt`):
+
+| System | Download |
+| --- | --- |
+| Windows 10/11 | [repopulse-windows.zip](https://github.com/dxcufgb/RepoPulse/releases/latest/download/repopulse-windows.zip) |
+| Linux, Raspberry Pi, macOS | [repopulse-linux.tar.gz](https://github.com/dxcufgb/RepoPulse/releases/latest/download/repopulse-linux.tar.gz) |
 
 ### Windows
 
 1. Install Python 3.9+ from <https://www.python.org/downloads/> and tick
    **Add python.exe to PATH** in the installer.
-2. Unzip RepoPulse somewhere permanent, for example `C:\RepoPulse`.
+2. Unzip `repopulse-windows.zip` somewhere permanent, for example `C:\RepoPulse`.
 3. Double-click **install.bat**. It creates a private Python environment in
    `.venv`, installs the two dependencies (Flask and Waitress), creates
    `config.json` and asks for an admin username and password (skipped when
@@ -54,7 +100,8 @@ Task Scheduler), open PowerShell **as administrator** in the folder and run:
 
 ```bash
 sudo apt install python3 python3-venv     # Debian, Ubuntu, Raspberry Pi OS
-cd repopulse
+curl -fLO https://github.com/dxcufgb/RepoPulse/releases/latest/download/repopulse-linux.tar.gz
+tar xzf repopulse-linux.tar.gz && cd repopulse-*/
 ./install.sh                # environment, config.json, admin account
 ./run.sh                    # start in the foreground
 ```
@@ -144,7 +191,8 @@ stored in the database on your server and never sent to the browser.
 ## Configuration
 
 `config.json` holds the server settings (everything else is edited in the admin
-area). Each value can also be set with an environment variable such as
+area). It is plain UTF-8 JSON (a byte-order mark, as Notepad or Windows PowerShell
+may add, is fine). Each value can also be set with an environment variable such as
 `REPOPULSE_PORT=9000`.
 
 | Setting | Default | Meaning |
@@ -227,7 +275,12 @@ The tests need no network: GitHub is faked. Every push and pull request runs the
   the reason, on the line or the line before it.
 - **Workflow lint** (actionlint and zizmor) when `.github/` changes, and **Claude** reviews of pull requests.
 
-`main` is protected: changes go through a pull request with the checks green and are squash-merged.
+`main` is protected by the "Protect main" ruleset (`.github/ruleset-protect-main.json`): changes go through a pull
+request with one approval and every check above (except Workflow lint and Claude) green, and are squash-merged with
+the pull request's title and description. Release tags `v*` cannot be moved or deleted ("Protect release tags").
+Dependabot keeps the pinned GitHub Actions and the Python dependencies up to date with one grouped pull request a
+week each. Bugs and ideas go in the issue templates; security problems are reported privately
+([`.github/SECURITY.md`](.github/SECURITY.md)).
 
 ### Releasing
 
@@ -241,8 +294,9 @@ the version stamped in, and `SHA256SUMS.txt`, and publishes the release. Nobody 
 ### The GitHub repository
 
 `scripts/setup-repo.sh` creates the GitHub repository (or re-applies its settings): it commits what is not committed
-yet, pushes `main`, sets the merge and security settings (secret scanning with push protection, Dependabot alerts
-and updates, private vulnerability reporting, CodeQL), creates the rulesets in `.github/` (protected `main`,
+yet, pushes `main`, sets the description, topics and merge settings (squash merges only, branches deleted after
+merging), the security settings (secret scanning with push protection, Dependabot alerts and updates, private
+vulnerability reporting, CodeQL), creates the rulesets in `.github/` (protected `main`,
 protected `v*` tags) and starts the first release. It needs the GitHub CLI logged in with
 `gh auth login --scopes repo,workflow`; `--dry-run` shows what it would do and `--help` lists the options.
 

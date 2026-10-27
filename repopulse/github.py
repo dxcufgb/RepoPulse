@@ -63,7 +63,7 @@ class GitHubClient:
         if self.token:
             req.add_header("Authorization", f"Bearer {self.token}")
         try:
-            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected -- the configured GitHub API base URL plus fixed paths
+            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- the configured GitHub API base URL plus fixed paths
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 headers = {k.lower(): v for k, v in resp.headers.items()}
                 body = resp.read().decode("utf-8")

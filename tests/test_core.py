@@ -95,6 +95,10 @@ class LoadConfig(unittest.TestCase):
         self.assertEqual(cfg.github_api_url, "https://ghe/api/v3")
         self.assertEqual(cfg.db_path, self.tmp / "store" / "repopulse.db")
 
+    def test_file_with_a_byte_order_mark(self):
+        (self.tmp / "config.json").write_bytes(b"\xef\xbb\xbf" + json.dumps({"port": 9000}).encode("utf-8"))
+        self.assertEqual(self.load().port, 9000)
+
 
 class FakeGitHub:
     def __init__(self, downloads=10, error=None):
