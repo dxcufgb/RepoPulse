@@ -35,7 +35,7 @@ trap 'rm -rf "$STAGE"' EXIT
 cd "$ROOT"
 mkdir -p "$STAGE/$NAME"
 git ls-files -z -- README.md LICENSE requirements.txt config.example.json \
-  install.sh install.ps1 install.bat run.sh run.bat repopulse \
+  install.sh install.ps1 install.bat run.sh run.bat auto-update.sh auto-update.ps1 repopulse \
   | while IFS= read -r -d '' f; do
       mkdir -p "$STAGE/$NAME/$(dirname "$f")"
       cp -p "$f" "$STAGE/$NAME/$f"
@@ -54,7 +54,7 @@ init.write_bytes(text.encode("utf-8"))
 index = root / "repopulse" / "static" / "index.html"
 index.write_bytes(re.sub(r"\?v=[0-9A-Za-z.-]+", f"?v={version}", index.read_text(encoding="utf-8")).encode("utf-8"))
 EOF
-chmod 755 "$STAGE/$NAME/install.sh" "$STAGE/$NAME/run.sh"
+chmod 755 "$STAGE/$NAME/install.sh" "$STAGE/$NAME/run.sh" "$STAGE/$NAME/auto-update.sh"
 
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"

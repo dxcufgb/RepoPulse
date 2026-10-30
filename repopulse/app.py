@@ -11,7 +11,7 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, request, send_from_directory, session
 from werkzeug.exceptions import HTTPException
 
-from . import __version__, auth, stats
+from . import __version__, appearance, auth, notify, stats, updates
 from .collector import Collector, Scheduler, now_iso
 from .config import Config
 from .db import Database
@@ -164,6 +164,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
             needs_setup=auth.user_count(db) == 0,
             setup_allowed=auth.user_count(db) == 0 and (cfg.allow_remote_setup or auth.is_local_request()),
             version=__version__,
+            appearance=appearance.clean(settings.get("appearance")),
         )
 
     # nosemgrep: python.lang.maintainability.useless-inner-function -- the decorator registers it with Flask
@@ -405,6 +406,55 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
             server={"port": cfg.port, "data_dir": str(cfg.data_dir), "db": str(cfg.db_path)},
         )
 
+    # --------------------------------------------------------- updates, e-mail
+    @app.get("/api/admin/update")
+    @auth.admin_required
+    def update_status():
+        return jsonify(installed=__version__, setup=updates.setup(cfg.data_dir),
+                       last=db.get_setting("last_update", None), last_check=db.get_setting("last_update_check", None))
+
+    @app.post("/api/admin/update/check")
+    @auth.admin_required
+    def update_check():
+        return jsonify(updates.check_latest(force=bool(body().get("force"))))
+
+    @app.post("/api/admin/update/now")
+    @auth.admin_required
+    def update_now():
+        problem = updates.request_now(cfg.data_dir)
+        if problem:
+            return jsonify(error=problem), 409
+        log.info("Update requested from the admin page by %s", session.get("user"))
+        return jsonify(ok=True, installed=__version__)
+
+    @app.get("/api/admin/notify")
+    @auth.admin_required
+    def get_notify():
+        return jsonify(notify.public(notify.settings(db)))
+
+    @app.put("/api/admin/notify")
+    @auth.admin_required
+    def put_notify():
+        problem, merged = notify.validate(body(), notify.settings(db))
+        if problem:
+            return jsonify(error=problem), 400
+        db.set_setting("notify", merged)
+        return jsonify(notify.public(merged))
+
+    @app.post("/api/admin/notify/test")
+    @auth.admin_required
+    def test_notify():
+        s = notify.settings(db)
+        if not s["recipients"] or not s["host"]:
+            return jsonify(error="Add at least one address and the mail server first, then save."), 400
+        try:
+            sent = notify.send(s, f"RepoPulse ({notify.host_label()}): test e-mail",
+                               "This is a test e-mail from RepoPulse. Update notifications will look like this."
+                               + notify.footer())
+        except notify.NotifyError as exc:
+            return jsonify(error=str(exc)), 502
+        return jsonify(ok=True, sent=sent)
+
     @app.get("/api/admin/rate-limit")
     @auth.admin_required
     def rate_limit():
@@ -441,6 +491,18 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
                     return jsonify(error=f"Token check failed: {exc}"), 400
             db.set_setting("github_token", token)
         return get_settings()
+
+    @app.put("/api/admin/appearance")
+    @auth.admin_required
+    def put_appearance():
+        """The page-wide look; options left out keep their saved value."""
+        data = body().get("appearance")
+        problem = appearance.validate(data)
+        if problem:
+            return jsonify(error=problem), 400
+        merged = {**appearance.clean(db.get_setting("appearance", None)), **data}
+        db.set_setting("appearance", appearance.clean(merged))
+        return jsonify(appearance=appearance.clean(merged))
 
     def valid_layout(layout) -> str | None:
         if not isinstance(layout, dict) or not isinstance(layout.get("widgets"), list):

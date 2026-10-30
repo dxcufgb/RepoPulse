@@ -25,6 +25,11 @@ single-page frontend without a build step. Python 3.9+; runtime dependencies are
 - `repopulse/db.py` — SQLite schema, migrations, settings (`DEFAULT_SETTINGS`), `glob_clause` for asset filters.
 - `repopulse/collector.py` — the daily collection and the scheduler thread; `github.py` — the GitHub REST client.
 - `repopulse/stats.py` — read-side queries for the dashboard and the CSV export.
+- `repopulse/appearance.py` — the page-wide look (Admin, Appearance); same option lists as `static/js/appearance.js`.
+- `repopulse/updater.py` — standalone (standard library only) release check/download/verify, run by root/SYSTEM with
+  `-I`; never import RepoPulse in it. `auto-update.sh` / `auto-update.ps1` — the update itself (backup, copy, pip,
+  restart, rollback). `repopulse/updates.py` — what the server knows (set up?, Update now request, Check for update).
+  `repopulse/notify.py` — update e-mails (smtplib) and the recorded result (`update-event` command).
 - `repopulse/static/` — the frontend (ES modules, `markup`` ` templates in `js/util.js`), vendored fonts and Chart.js.
 - `install.sh`, `install.ps1` (+ `install.bat`), `run.sh`, `run.bat` — install and start.
 - `.github/` — workflows (`ci.yml`, `security.yml`, `release.yml`, `workflow-lint.yml`, `claude.yml`), the rulesets
@@ -48,6 +53,10 @@ single-page frontend without a build step. Python 3.9+; runtime dependencies are
   Changing a password ends every other session (`pw_fingerprint`). Request bodies are user input.
 - **First-run setup** is allowed only from the server itself (`is_local_request`) unless `allow_remote_setup`;
   forwarded headers count only with `behind_proxy` (ProxyFix).
+- **Automatic updates**: on Linux root must never run or parse files the service account can change: the updater
+  runs from `/usr/local/lib/repopulse-update/` with the system Python, and every step inside the app folder goes
+  through `runuser`. Only strictly newer, checksum-verified final releases; `config.json`, `data/`, `.venv` are never
+  replaced. The SMTP password is never returned (`password_set` only), logged or printed.
 - **The GitHub token** stays on the server: never in a response (only `github_token_hint`), a log line or a URL; it
   goes only to the configured API URL as the Authorization header.
 - **SQL** uses `?` parameters; the few formatted statements use fixed column names (annotated for Semgrep).

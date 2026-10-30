@@ -3,7 +3,8 @@
 import { ApiError, api } from "./api.js";
 import { Model } from "./data.js";
 import { $, $$, confirmDialog, frag, markup, icon, setHTML, store, toast, trapFocus, uid } from "./util.js";
-import { TYPES, defaultLayout, defaultRepoLayout, renderWidget, repoHref, titleOf, typesFor } from "./widgets.js";
+import { appearance } from "./appearance.js";
+import { SHARED_KEYS, TYPES, defaultLayout, defaultRepoLayout, renderWidget, repoHref, titleOf, typesFor } from "./widgets.js";
 
 const RANGES = [[7, "7 days"], [30, "30 days"], [90, "90 days"], [365, "12 months"], [0, "All time"]];
 
@@ -16,7 +17,11 @@ export class Dashboard {
     this.base = editable ? "/admin" : "";
     this.editing = false;
     this.charts = [];
-    this.globalDays = store.get("repopulse-range", 30);
+    // The admin picks the visitors' starting range (Admin, Appearance); with the
+    // range switch hidden, visitors always see that range.
+    const look = appearance();
+    const fallback = Number(look.default_range);
+    this.globalDays = look.rangebar === "hide" && !editable ? fallback : store.get("repopulse-range", fallback);
     this.onTheme = () => this.renderGrid();
     window.addEventListener("repopulse:theme", this.onTheme);
   }
@@ -114,16 +119,16 @@ export class Dashboard {
 
   render() {
     setHTML(this.root, markup`${this.pageHeader()}
-      <div class="toolbar ${this.editing ? "edit-bar" : ""}" role="region" aria-label="Dashboard controls">
+      <div class="toolbar ${this.editing ? "edit-bar" : ""} ${this.editable ? "" : "public"}" role="region" aria-label="Dashboard controls">
         <div class="left">
           ${this.editing ? this.editIntro() : markup`
-          <span class="label" id="range-label">Range</span>
-          <div class="seg" role="group" aria-labelledby="range-label">${RANGES.map(([d, l]) =>
+          <span class="label range-picker" id="range-label">Range</span>
+          <div class="seg range-picker" role="group" aria-labelledby="range-label">${RANGES.map(([d, l]) =>
             markup`<button type="button" data-days="${d}" aria-pressed="${String(d === this.globalDays)}">${l}</button>`)}</div>`}
         </div>
         <div class="right">
           ${this.editing ? this.editButtons() : markup`
-            <a class="btn small ghost" href="/api/export.csv" download>${icon("download")} Download CSV</a>
+            <a class="btn small ghost csv-link" href="/api/export.csv" download>${icon("download")} Download CSV</a>
             ${this.editable ? markup`<button type="button" class="btn small primary" data-act="edit">${icon("edit")} ${this.repo ? (this.source === "own" ? "Edit this page" : "Edit repository pages") : "Edit layout"}</button>` : ""}`}
         </div>
       </div>
@@ -296,11 +301,14 @@ function openEditor(existing, dash) {
         if (fd.overviewOnly && dash.repo) continue;
         const id = `ed-${fd.key}`;
         const v = cfg[fd.key];
-        if (fd.type === "text") parts.push(markup`<label class="field" for="${id}"><span>${fd.label}${fd.hint ? markup` <span class="hint">${fd.hint}</span>` : ""}</span>
+        if (fd.type === "heading") parts.push(markup`<h3 class="field-heading">${fd.label}</h3>`);
+        else if (fd.type === "multi") parts.push(markup`<fieldset class="field" style="border:0;padding:0;margin:0"><legend style="font-weight:600;font-size:14px;margin-bottom:6px">${fd.label}</legend>
+          <div class="chips">${fd.options.map(([ov, ol]) => markup`<label><input type="checkbox" data-multi="${fd.key}" value="${ov}" ${!Array.isArray(v) || v.includes(ov) ? "checked" : ""}>${ol}</label>`)}</div></fieldset>`);
+        else if (fd.type === "text") parts.push(markup`<label class="field" for="${id}"><span>${fd.label}${fd.hint ? markup` <span class="hint">${fd.hint}</span>` : ""}</span>
           <input class="input" id="${id}" data-k="${fd.key}" value="${v || ""}" placeholder="${type.autoTitle(cfg, dash.ctx())}" maxlength="80"></label>`);
         else if (fd.type === "textarea") parts.push(markup`<label class="field" for="${id}"><span>${fd.label} <span class="hint">${fd.hint || ""}</span></span>
           <textarea class="input" id="${id}" data-k="${fd.key}" maxlength="2000" rows="6">${v || ""}</textarea></label>`);
-        else if (fd.type === "select") parts.push(markup`<label class="field" for="${id}"><span>${fd.label}</span>
+        else if (fd.type === "select") parts.push(markup`<label class="field" for="${id}"><span>${fd.label}${fd.hint ? markup` <span class="hint">${fd.hint}</span>` : ""}</span>
           <select class="input" id="${id}" data-k="${fd.key}">${fd.options.filter((o) => !o[2] || o[2] === where).map(([ov, ol]) => markup`<option value="${ov}" ${String(ov) === String(v ?? "") ? "selected" : ""}>${ol}</option>`)}</select></label>`);
         else if (fd.type === "check") parts.push(markup`<label class="check"><input type="checkbox" data-k="${fd.key}" ${v ? "checked" : ""}> ${fd.label}</label>`);
         else if (fd.type === "repo") parts.push(markup`<label class="field" for="${id}"><span>${fd.label}</span>
@@ -314,7 +322,7 @@ function openEditor(existing, dash) {
 
       $$("[data-type]", fields).forEach((b) => b.addEventListener("click", () => {
         if (b.dataset.type === cfg.type) return;
-        const keep = { id: cfg.id, title: cfg.title, repos: cfg.repos, range: cfg.range };
+        const keep = Object.fromEntries(SHARED_KEYS.filter((k) => cfg[k] !== undefined).map((k) => [k, cfg[k]]));
         cfg = { ...structuredClone(TYPES[b.dataset.type].defaults), ...keep, type: b.dataset.type };
         if (!TYPES[cfg.type].fields.some((x) => x.key === "repos")) delete cfg.repos;
         if (["releases", "releasetime", "files"].includes(cfg.type) && !cfg.repo && repos[0] && !dash.repo) cfg.repo = repos[0].id;
@@ -324,12 +332,18 @@ function openEditor(existing, dash) {
       $$("[data-k]", fields).forEach((el) => el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input", () => {
         const k = el.dataset.k;
         let val = el.type === "checkbox" ? el.checked : el.value;
-        if (["range", "limit", "repo"].includes(k) && val !== "global" && val !== "") val = Number(val);
+        if (["range", "limit", "repo", "rows", "avg"].includes(k) && val !== "global" && val !== "") val = Number(val);
         cfg[k] = val;
         const fd = TYPES[cfg.type].fields.find((x) => x.key === k);
+        // other options may appear or disappear with this choice
         const needsRedraw = TYPES[cfg.type].fields.some((x) => x.show);
-        if (needsRedraw && fd && fd.type === "select") { drawFields(); $(`[data-k="${k}"]`, fields)?.focus(); }
+        if (needsRedraw && fd && (fd.type === "select" || fd.type === "check")) { drawFields(); $(`[data-k="${k}"]`, fields)?.focus(); }
         clearTimeout(drawFields.t); drawFields.t = setTimeout(preview, el.type === "text" || el.tagName === "TEXTAREA" ? 250 : 0);
+      }));
+      $$("[data-multi]", fields).forEach((el) => el.addEventListener("change", () => {
+        const k = el.dataset.multi;
+        cfg[k] = $$(`[data-multi="${k}"]:checked`, fields).map((x) => x.value);
+        preview();
       }));
       $$("[data-repo]", fields).forEach((el) => el.addEventListener("change", () => {
         cfg.repos = $$("[data-repo]:checked", fields).map((x) => Number(x.dataset.repo));

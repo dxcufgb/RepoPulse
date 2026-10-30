@@ -5,6 +5,10 @@
   create-admin     create an admin account
   set-password     change an admin account's password
   status           show tracked repos and the latest collection
+  check-update     ask GitHub whether a newer release exists (exit 10 = yes, 0 = no, 1 = could not check)
+  set-notify       set who gets the update e-mails and the mail server (asks, or --from-env)
+  test-email       send a test e-mail with the saved settings
+  update-event     record the result of an automatic update and e-mail it (used by auto-update.sh/.ps1)
 """
 from __future__ import annotations
 
@@ -46,6 +50,16 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--username")
         p.add_argument("--password", help="avoid on shared machines; you will be asked otherwise")
     sub.add_parser("status", help="show tracked repos and last run")
+    sub.add_parser("check-update", help="ask GitHub whether a newer release exists")
+    sn = sub.add_parser("set-notify", help="set the update e-mail recipients and mail server")
+    sn.add_argument("--from-env", action="store_true",
+                    help="read REPOPULSE_NOTIFY_EMAILS, REPOPULSE_SMTP_HOST, _PORT, _SECURITY, _USER, _PASSWORD, _FROM")
+    sub.add_parser("test-email", help="send a test e-mail")
+    ev = sub.add_parser("update-event", help="record an automatic update's result (used by the update scripts)")
+    ev.add_argument("--outcome", required=True, choices=("updated", "failed", "rolled-back", "current"))
+    ev.add_argument("--from", dest="old", default="")
+    ev.add_argument("--to", dest="new", default="")
+    ev.add_argument("--message-stdin", action="store_true", help="read the details from standard input")
     args = parser.parse_args(argv)
     command = args.command or "serve"
 
@@ -113,6 +127,71 @@ def main(argv: list[str] | None = None) -> int:
             print(f"No user called '{username}'.")
             return 1
         print(f"Password for '{username}' changed.")
+        return 0
+
+    if command == "check-update":
+        from . import updates
+        info = updates.check_latest(force=True)
+        if info["error"]:
+            print(f"Could not check: {info['error']}")
+            return 1
+        if info["newer"]:
+            print(f"RepoPulse {info['latest']} is available (installed: {info['installed']}). {info['url']}")
+            return 10
+        print(f"RepoPulse {info['installed']} is up to date (latest release: {info['latest'] or 'none'}).")
+        return 0
+
+    if command == "set-notify":
+        from . import notify
+        if args.from_env:
+            import os
+            env = {"recipients": "REPOPULSE_NOTIFY_EMAILS", "host": "REPOPULSE_SMTP_HOST", "port": "REPOPULSE_SMTP_PORT",
+                   "security": "REPOPULSE_SMTP_SECURITY", "user": "REPOPULSE_SMTP_USER",
+                   "password": "REPOPULSE_SMTP_PASSWORD", "sender": "REPOPULSE_SMTP_FROM"}
+            data = {k: os.environ[v] for k, v in env.items() if os.environ.get(v)}
+            if not data:
+                print("No REPOPULSE_NOTIFY_EMAILS / REPOPULSE_SMTP_* variables set; nothing changed.")
+                return 0
+        else:
+            cur = notify.settings(db)
+            ask = lambda label, value: input(f"{label} [{value}]: ").strip() or value  # noqa: E731
+            data = {"recipients": ask("E-mail addresses (comma separated, empty = no e-mails)", ", ".join(cur["recipients"]))}
+            if data["recipients"]:
+                data["host"] = ask("Mail server (e.g. smtp.gmail.com)", cur["host"])
+                data["security"] = ask("Security: starttls, tls or none", cur["security"])
+                data["port"] = ask("Port", str(cur["port"] if cur["host"] else notify.DEFAULT_PORTS.get(data["security"], 587)))
+                data["user"] = ask("User name (empty = no login)", cur["user"])
+                if data["user"]:
+                    data["password"] = getpass.getpass("Password (empty = keep the saved one): ")
+                data["sender"] = ask("Sender address (empty = the user name)", cur["sender"])
+        problem, merged = notify.validate(data, notify.settings(db))
+        if problem:
+            print(problem)
+            return 1
+        db.set_setting("notify", merged)
+        print(f"Saved: {len(merged['recipients'])} recipient(s)" + (f", mail server {merged['host']}" if merged["host"] else ""))
+        return 0
+
+    if command == "test-email":
+        from . import notify
+        try:
+            sent = notify.send(notify.settings(db), f"RepoPulse ({notify.host_label()}): test e-mail",
+                               "This is a test e-mail from RepoPulse." + notify.footer())
+        except notify.NotifyError as exc:
+            print(f"Not sent: {exc}")
+            return 1
+        print(f"Sent to {sent} recipient(s)." if sent else "No recipients or no mail server set; nothing sent.")
+        return 0
+
+    if command == "update-event":
+        from . import notify
+        from .collector import now_iso
+        message = sys.stdin.read(20000) if args.message_stdin else ""
+        event = notify.record_update(db, args.outcome, args.old, args.new, message, now=now_iso())
+        if event["email_error"]:
+            print(f"notify: e-mail not sent: {event['email_error']}")
+        elif event["emailed"]:
+            print(f"notify: e-mail sent to {event['emailed']} recipient(s)")
         return 0
 
     if command == "status":

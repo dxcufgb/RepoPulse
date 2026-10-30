@@ -112,6 +112,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "last_scheduled_run": "",
     "layout": None,       # overview page; the frontend's starter layout until saved
     "repo_layout": None,  # shared layout for repository pages
+    "appearance": None,   # page-wide look (appearance.py); the built-in look until saved
 }
 
 
