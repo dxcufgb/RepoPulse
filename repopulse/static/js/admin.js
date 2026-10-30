@@ -360,6 +360,113 @@ function statusTag(s) {
   return markup`<span class="tag ${cls}">${label}</span>`;
 }
 
+/* ------------------------------------------------------------ updates */
+const OUTCOME = { updated: ["ok", "Updated"], "rolled-back": ["warn", "Rolled back"], failed: ["err", "Failed"] };
+
+async function updatesPanel(box) {
+  let u;
+  try { u = await api("/api/admin/update"); } catch (e) { setHTML(box, markup`<h2>Updates</h2><p class="error-text">${e.message}</p>`); return; }
+  const linux = u.setup.platform === "linux", windows = u.setup.platform === "windows";
+  const how = linux ? markup`<code>sudo ./install.sh --enable-auto-update</code>` : windows ? markup`<code>.\install.ps1 -EnableAutoUpdate</code> (as administrator)` : "";
+  const last = u.last;
+  setHTML(box, markup`<h2>Updates</h2>
+    <p class="lead">RepoPulse ${u.installed}. ${u.setup.daily
+      ? "Automatic updates are on: once a day RepoPulse checks for a new release and installs it, and goes back to the previous version if the new one does not start."
+      : markup`Automatic updates are off.${how ? markup` Turn them on in the installation folder with ${how}.` : ""}`}</p>
+    ${last ? markup`<p style="margin:0 0 12px">Last update: ${statusTagFor(last.outcome)} ${last.from && last.to ? `${last.from} → ${last.to}` : last.to || last.from || ""}
+      <span class="muted">${last.at ? fmtDateTime(last.at) : ""}${last.emailed ? `, e-mailed to ${last.emailed}` : last.email_error ? `, e-mail not sent: ${last.email_error}` : ""}</span></p>
+      ${last.message && last.outcome !== "updated" ? markup`<details style="margin:0 0 12px"><summary>Details</summary><pre class="log-box">${last.message}</pre></details>` : ""}` : ""}
+    ${u.last_check ? markup`<p class="muted" style="margin:0 0 12px;font-size:13.5px">Last automatic check: ${fmtDateTime(u.last_check.at)}</p>` : ""}
+    <div class="row" style="align-items:center"><button type="button" class="btn" id="upd-check">${icon("refresh")} Check for update</button>
+      <span id="upd-result" aria-live="polite"></span></div>`);
+  $("#upd-check", box).addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    const out = $("#upd-result", box);
+    btn.disabled = true;
+    setHTML(out, markup`<span class="spinner"></span>`);
+    try {
+      const r = await api("/api/admin/update/check", { method: "POST", body: { force: true } });
+      if (r.error) { setHTML(out, markup`<span class="error-text">${r.error}</span>`); return; }
+      if (!r.newer) { setHTML(out, markup`<span class="muted">Up to date (latest release: ${r.latest || "none"}).</span>`); return; }
+      setHTML(out, markup`<span><strong>RepoPulse ${r.latest}</strong> is available. <a href="${r.url}" target="_blank" rel="noopener">What's new</a></span>
+        ${u.setup.now ? markup`<button type="button" class="btn small primary" id="upd-now">Update now</button>`
+          : markup`<span class="muted">${how ? markup`Install it with ${linux ? markup`<code>sudo ./install.sh --update-now</code>` : markup`<code>.\install.ps1 -UpdateNow</code>`} after turning automatic updates on, or ` : ""}download it from the release page.</span>`}`);
+      $("#upd-now", out)?.addEventListener("click", () => updateNow(r.latest, u));
+    } catch (ex) { setHTML(out, markup`<span class="error-text">${ex.message}</span>`); }
+    finally { btn.disabled = false; }
+  });
+}
+
+function statusTagFor(outcome) {
+  const [cls, label] = OUTCOME[outcome] || ["", outcome];
+  return markup`<span class="tag ${cls}">${label}</span>`;
+}
+
+async function updateNow(version, before) {
+  if (!(await confirmDialog(`Update to ${version}?`, "RepoPulse downloads the release, checks it and restarts with it, which takes a minute or two. If the new version does not start, the current one is put back.", "Update now"))) return;
+  try { await api("/api/admin/update/now", { method: "POST" }); }
+  catch (e) { toast(e.message, "error"); return; }
+  toast("Updating. This page reloads when RepoPulse is back.");
+  const lastAt = before.last?.at || "";
+  const started = Date.now();
+  const poll = async () => {
+    if (Date.now() - started > 8 * 60 * 1000) { toast("The update is taking long. Check the log on the server.", "error"); return; }
+    try {
+      const site = await api("/api/site");
+      if (site.version !== before.installed) { location.reload(); return; }
+      const u = await api("/api/admin/update");
+      if (u.last && u.last.at !== lastAt && u.last.outcome !== "updated") {
+        toast(u.last.outcome === "rolled-back" ? "The new version did not start; the current one is running again." : "The update failed. See Updates for details.", "error");
+        updatesPanel($("#p-updates"));
+        return;
+      }
+    } catch { /* restarting */ }
+    setTimeout(poll, 4000);
+  };
+  setTimeout(poll, 5000);
+}
+
+async function notifyForm(form) {
+  let n;
+  try { n = await api("/api/admin/notify"); } catch (e) { setHTML(form, markup`<p class="error-text">${e.message}</p>`); return; }
+  setHTML(form, markup`
+    <label class="field"><span>E-mail addresses <span class="hint">comma separated, up to 10</span></span>
+      <input class="input" name="recipients" value="${n.recipients.join(", ")}" placeholder="you@example.com" autocomplete="email"></label>
+    <div class="cols-2">
+      <label class="field"><span>Mail server <span class="hint">for Gmail: smtp.gmail.com with an app password</span></span><input class="input" name="host" value="${n.host}" placeholder="smtp.example.com"></label>
+      <div class="row"><label class="field grow"><span>Security</span><select class="input" name="security">
+          ${[["starttls", "STARTTLS (port 587)"], ["tls", "TLS (port 465)"], ["none", "None (local relay, no login)"]].map(([v, l]) => markup`<option value="${v}" ${n.security === v ? "selected" : ""}>${l}</option>`)}</select></label>
+        <label class="field" style="width:110px"><span>Port</span><input class="input" name="port" inputmode="numeric" value="${n.port}"></label></div>
+      <label class="field"><span>User name <span class="hint">empty = no login</span></span><input class="input" name="user" value="${n.user}" autocomplete="off"></label>
+      <label class="field"><span>Password</span><input class="input" type="password" name="password" autocomplete="new-password" placeholder="${n.password_set ? "Saved. Type to replace." : ""}"></label>
+      <label class="field"><span>Sender <span class="hint">empty = the user name</span></span><input class="input" name="sender" value="${n.sender}" placeholder="repopulse@example.com"></label>
+    </div>
+    <div class="row"><button class="btn primary" type="submit">Save notifications</button>
+      <button class="btn" type="button" id="n-test">Send test e-mail</button>
+      ${n.password_set ? markup`<button class="btn danger" type="button" id="n-clear">Remove password</button>` : ""}</div>`);
+  const ports = { starttls: 587, tls: 465, none: 25 };
+  form.security.addEventListener("change", () => { if (Object.values(ports).includes(Number(form.port.value))) form.port.value = ports[form.security.value]; });
+  const values = () => ({ recipients: form.recipients.value, host: form.host.value, security: form.security.value, port: form.port.value,
+    user: form.user.value, password: form.password.value, sender: form.sender.value });
+  const save = async (extra = {}) => {
+    try { await api("/api/admin/notify", { method: "PUT", body: { ...values(), ...extra } }); return true; }
+    catch (e) { toast(e.message, "error"); return false; }
+  };
+  form.addEventListener("submit", async (e) => { e.preventDefault(); if (await save()) { toast("Notifications saved"); notifyForm(form); } });
+  $("#n-clear", form)?.addEventListener("click", async () => { if (await save({ password: "", clear_password: true })) { toast("Password removed"); notifyForm(form); } });
+  $("#n-test", form).addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      if (!(await save())) return;
+      const r = await api("/api/admin/notify/test", { method: "POST" });
+      toast(`Test e-mail sent to ${r.sent} ${r.sent === 1 ? "address" : "addresses"}`);
+      notifyForm(form);
+    } catch (ex) { toast(ex.message, "error"); }
+    finally { btn.disabled = false; }
+  });
+}
+
 /* --------------------------------------------------------- appearance */
 // Ready-made combinations; options not named keep their default. The visitor
 // options (range, buttons, animations) are never changed by a preset.
@@ -499,6 +606,12 @@ async function settingsView(body) {
           ${s.github_token_set ? markup`<button class="btn danger" type="button" id="rm-token">Remove token</button>` : ""}</div>
       </form></section>
 
+    <section class="panel" id="p-updates"><h2>Updates</h2><p class="lead">Loading…</p></section>
+
+    <section class="panel"><h2>Notifications</h2>
+      <p class="lead">E-mails when RepoPulse installs an update or an automatic update fails. No addresses, no e-mails.</p>
+      <form id="f-notify" class="stack" novalidate><p class="muted">Loading…</p></form></section>
+
     <div class="cols-2" style="margin-top:16px">
       <section class="panel" style="margin:0"><h2>Password</h2><p class="lead">For the account ${s.user}.</p>
         <form id="f-pass" class="stack" novalidate>
@@ -513,6 +626,9 @@ async function settingsView(body) {
         <p class="muted" style="margin:14px 0 0;font-size:13.5px">RepoPulse ${s.version}, listening on port ${s.server.port}.</p>
       </section>
     </div>`);
+
+  updatesPanel($("#p-updates"));
+  notifyForm($("#f-notify"));
 
   api("/api/admin/rate-limit").then((r) => {
     const line = $("#rate-line");

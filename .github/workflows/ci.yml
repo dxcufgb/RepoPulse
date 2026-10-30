@@ -65,7 +65,7 @@ jobs:
           persist-credentials: false
 
       - name: Shellcheck the scripts
-        run: shellcheck install.sh run.sh scripts/*.sh
+        run: shellcheck install.sh run.sh auto-update.sh scripts/*.sh
 
   powershell:
     name: PSScriptAnalyzer
@@ -105,9 +105,12 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      # with the system Python, like a real install; no terminal, so the admin account is skipped
-      - name: Install as a systemd service
-        run: ./install.sh --service --port "$PORT" < /dev/null
+      # with the system Python, like a real install; no terminal, so the admin account is skipped. Without .git, like
+      # a folder unpacked from a release archive (the installer does not set up automatic updates for a git checkout).
+      - name: Install as a systemd service, with automatic updates
+        run: |
+          rm -rf .git
+          ./install.sh --service --auto-update --port "$PORT" < /dev/null
 
       - name: RepoPulse answers
         run: |
@@ -134,6 +137,26 @@ jobs:
         run: |
           ./install.sh < /dev/null
           python3 -c 'import json, os; assert json.load(open("config.json"))["port"] == int(os.environ["PORT"])'
+
+      - name: Automatic updates are set up
+        run: |
+          systemctl is-enabled repopulse-update.timer repopulse-update-now.path
+          systemctl is-active repopulse-update-now.path
+          sudo grep -qx "APP_DIR=$PWD" /etc/repopulse/auto-update.conf
+          test "$(stat -c %U /usr/local/lib/repopulse-update/auto-update.sh)" = root
+          test "$(stat -c %U data/update-request)" = "$(id -un)"
+          # check only: GitHub answers (0 or 10), or there is no release / no network (1); never a crash
+          set +e; ./install.sh --check-update; rc=$?; set -e
+          case "$rc" in 0|1|10) ;; *) echo "unexpected exit code $rc"; exit 1 ;; esac
+          # a re-run of --service keeps them on
+          ./install.sh --service < /dev/null
+          systemctl is-enabled repopulse-update.timer
+          ./install.sh --disable-auto-update
+          test ! -e /etc/systemd/system/repopulse-update.timer
+          test ! -e /etc/repopulse/auto-update.conf
+          test ! -e data/update-request
+          ./install.sh --enable-auto-update < /dev/null
+          systemctl is-enabled repopulse-update.timer
 
       - name: Remove the service
         run: |
@@ -184,6 +207,21 @@ jobs:
           catch { if ($_.Exception.Response.StatusCode.value__ -ne 401) { throw } }
           if (-not (Test-Path data\repopulse.db)) { throw "no database in data\" }
 
+      - name: Automatic updates
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Remove-Item -Recurse -Force .git   # like a folder unpacked from a release archive
+          '' | powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -EnableAutoUpdate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($t in 'RepoPulse-Update', 'RepoPulse-UpdateNow') {
+            $task = Get-ScheduledTask -TaskName $t
+            if ($task.Principal.UserId -ne 'SYSTEM') { throw "$t does not run as SYSTEM" }
+          }
+          if (-not (Test-Path "$env:ProgramData\RepoPulse\auto-update.ps1")) { throw "the updater was not copied" }
+          '' | powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -CheckUpdate
+          if (@(0, 1, 10) -notcontains $LASTEXITCODE) { throw "unexpected exit code $LASTEXITCODE" }
+
       - name: Remove the startup task
         shell: powershell
         run: |
@@ -196,6 +234,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           if (Get-ScheduledTask -TaskName RepoPulse -ErrorAction SilentlyContinue) { throw "the RepoPulse task is still there" }
           if (Get-NetFirewallRule -DisplayName RepoPulse -ErrorAction SilentlyContinue) { throw "the firewall rule is still there" }
+          foreach ($t in 'RepoPulse-Update', 'RepoPulse-UpdateNow') { if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) { throw "$t is still there" } }
           if (-not (Test-Path data\repopulse.db)) { throw "the data was removed" }
 
   release-build:
@@ -225,6 +264,9 @@ jobs:
           unzip -Z1 repopulse-9.8.7-windows.zip > zip.txt
           for list in tar.txt zip.txt; do
             grep -qx 'repopulse-9.8.7/install.sh' "$list"
+            grep -qx 'repopulse-9.8.7/auto-update.sh' "$list"
+            grep -qx 'repopulse-9.8.7/auto-update.ps1' "$list"
+            grep -qx 'repopulse-9.8.7/repopulse/updater.py' "$list"
             grep -qx 'repopulse-9.8.7/repopulse/static/vendor/chart.umd.min.js' "$list"
             if grep -E '/(tests|scripts|\.github|data)/|/config\.json$|/CLAUDE\.md$' "$list"; then
               echo "::error::repository tooling or local data in $list"
@@ -235,6 +277,7 @@ jobs:
           grep -qx '__version__ = "9.8.7"' repopulse-9.8.7/repopulse/__init__.py
           grep -q '?v=9.8.7' repopulse-9.8.7/repopulse/static/index.html
           test -x repopulse-9.8.7/install.sh
+          test -x repopulse-9.8.7/auto-update.sh
 
       - name: Release notes header
         run: ./scripts/release-notes.sh 9.8.7 "$GITHUB_REPOSITORY" | grep -q 'repopulse-9.8.7-linux.tar.gz'

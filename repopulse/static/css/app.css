@@ -524,3 +524,4 @@ table.data tbody tr:hover td { background: var(--panel-2); }
 .slot.card-plain :is(.widget, .pulse) { border-color: transparent; box-shadow: none; }
 .slot.card-clear :is(.widget, .pulse) { background: transparent; border-color: transparent; box-shadow: none; padding-left: 2px; padding-right: 2px; }
 :root .grid.editing .widget { border-style: dashed; border-color: var(--line-strong); }
+.log-box { white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; font-size: 12.5px; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-ctl); padding: 10px 12px; margin: 8px 0 0; }
