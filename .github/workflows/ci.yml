@@ -221,6 +221,8 @@ jobs:
           if (-not (Test-Path "$env:ProgramData\RepoPulse\auto-update.ps1")) { throw "the updater was not copied" }
           '' | powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -CheckUpdate
           if (@(0, 1, 10) -notcontains $LASTEXITCODE) { throw "unexpected exit code $LASTEXITCODE" }
+          # GitHub ends a powershell step with the last program's exit code; 1 (no release yet) is fine here
+          exit 0
 
       - name: Remove the startup task
         shell: powershell
