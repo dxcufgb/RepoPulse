@@ -53,6 +53,7 @@ param(
     [string]$LogFile = ''
 )
 $ErrorActionPreference = 'Stop'
+$Quiet = $Unattended.IsPresent  # read inside functions
 $AppDir = $PSScriptRoot
 $Python = Join-Path $AppDir 'python\python.exe'
 $Root = Join-Path $env:ProgramData 'RepoPulse'
@@ -90,6 +91,7 @@ function Invoke-Python([string[]]$Arguments, [string]$InputText = $null) {
 
 # The RepoPulse command line with the installed settings, in this console.
 function Invoke-RepoPulse([string[]]$Arguments) {
+    $ErrorActionPreference = 'Continue'  # its stderr must not stop the script (Windows PowerShell 5.1)
     Push-Location $AppDir
     try { & $Python -m repopulse --config $Config @Arguments; return $LASTEXITCODE } finally { Pop-Location }
 }
@@ -263,7 +265,7 @@ function Disable-AutoUpdate {
 
 function Set-Notify {
     if ($env:REPOPULSE_NOTIFY_EMAILS) { [void](Invoke-RepoPulse @('set-notify', '--from-env')) }
-    elseif (-not $Unattended -and -not [Console]::IsInputRedirected -and [Environment]::UserInteractive) {
+    elseif (-not $Quiet -and -not [Console]::IsInputRedirected -and [Environment]::UserInteractive) {
         Write-Host 'RepoPulse can e-mail you when it installs an update or an update fails (empty = no e-mails).'
         [void](Invoke-RepoPulse @('set-notify'))
     } else { Write-Host 'Set who gets the update e-mails on Admin, Settings, or with: .\install.ps1 -SetNotify' }

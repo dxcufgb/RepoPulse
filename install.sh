@@ -445,8 +445,9 @@ ask_notify() { # the update e-mails: from the environment, asked for at a termin
 }
 
 require_installed() {
-    [ -x "$WRAPPER" ] && is_repopulse_folder "$INSTALL_DIR" && [ -x "$INSTALL_DIR/.venv/bin/python" ] \
-        || die "RepoPulse is not installed in $INSTALL_DIR; run install.sh from the release folder first"
+    if [ ! -x "$WRAPPER" ] || ! is_repopulse_folder "$INSTALL_DIR" || [ ! -x "$INSTALL_DIR/.venv/bin/python" ]; then
+        die "RepoPulse is not installed in $INSTALL_DIR; run install.sh from the release folder first"
+    fi
     PYTHON="$(find_python)" || die "no Python 3.9+ found"
     DATA_DIR="$(config_value data_dir "$DEFAULT_DATA_DIR")"
 }

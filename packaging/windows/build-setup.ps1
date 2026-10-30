@@ -38,11 +38,14 @@ $work = Join-Path ([IO.Path]::GetTempPath()) ('repopulse-setup-' + [Guid]::NewGu
 $stage = Join-Path $work 'RepoPulse'
 New-Item -ItemType Directory -Path $stage | Out-Null
 
+# Windows PowerShell 5.1: a native program's stderr becomes an error record, fatal under 'Stop', and double quotes inside
+# an argument are lost; so native calls run with 'Continue' and the Python snippets use no double quotes.
 function Get-Python {
+    $ErrorActionPreference = 'Continue'
     foreach ($candidate in @(@('py', "-$PythonMinor"), @('python'))) {
         if (-not (Get-Command $candidate[0] -ErrorAction SilentlyContinue)) { continue }
         $extra = @($candidate | Select-Object -Skip 1)
-        $v = & $candidate[0] @extra -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>$null
+        $v = & $candidate[0] @extra -c 'import sys; print(*sys.version_info[:2], sep=chr(46))' 2>$null
         if ("$v".Trim() -eq $PythonMinor) { return $candidate }
     }
     throw "Python $PythonMinor is needed to fetch the packages (the setup's Python is $PythonMinor)."
@@ -102,6 +105,7 @@ try {
     # 3. Flask and Waitress (and what they need) as Windows wheels for that Python.
     $py = Get-Python
     $pyExtra = @($py | Select-Object -Skip 1)
+    $ErrorActionPreference = 'Continue'
     & $py[0] @pyExtra -m pip install --disable-pip-version-check --no-compile --only-binary=:all: --platform win_amd64 `
         --python-version $PythonMinor --implementation cp --target (Join-Path $stage 'lib') -r (Join-Path $stage 'requirements.txt')
     if ($LASTEXITCODE -ne 0) { throw "pip install failed (exit code $LASTEXITCODE)" }
@@ -110,6 +114,7 @@ try {
     # Smoke test: the staged program starts with the bundled Python.
     $out = & (Join-Path $pyDir 'python.exe') -c 'import repopulse, repopulse.app, waitress; print(repopulse.__version__)' 2>&1
     if ($LASTEXITCODE -ne 0 -or "$out".Trim() -ne $Version) { throw "the staged program does not load: $out" }
+    $ErrorActionPreference = 'Stop'
 
     # 4. The installer.
     $iscc = @(
