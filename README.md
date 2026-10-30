@@ -36,7 +36,8 @@ RepoPulse asks GitHub once a day, keeps every day's numbers in a single SQLite f
 a public page with charts and tables: new downloads per day, which release people are moving to, which file they
 actually download. An admin area behind a login lets you add repositories and build the dashboard from widgets.
 
-It runs on Windows and Linux (including a Raspberry Pi) with Python 3.9 or newer, and needs only Flask and Waitress.
+It runs on Windows (an installer that brings its own Python) and Linux, including a Raspberry Pi (Python 3.9 or
+newer), and needs only Flask and Waitress.
 The page loads nothing from the internet: fonts and Chart.js are included.
 
 ## What you get
@@ -46,7 +47,7 @@ The page loads nothing from the internet: fonts and Chart.js are included.
 - **Widgets you can arrange:** headline total with a daily pulse, single numbers (new downloads, downloads per day,
   stars, forks, most downloaded repository…), line, area and bar charts over time (per day, week or month, per
   repository or combined), per-repository bars or ring charts, per-release charts for one repository, sortable
-  tables, and text notes. Every chart can switch to a table view.
+  tables, and text notes. The charts over time, per repository and per release can switch to a table view.
 - **Charts you can tune** per widget: lines, stacked or overlapping areas, stacked, side-by-side or 100% bars,
   rings, pies, polar areas and ranked lists; how many repositories (or releases, files) get a series of their own
   and whether the rest become "Other" or are left out; order, legend position, chart height, grid and axes, linear
@@ -85,54 +86,106 @@ Download the newest release (the links always point at the latest one; every rel
 
 | System | Download |
 | --- | --- |
-| Windows 10/11 | [repopulse-windows.zip](https://github.com/dxcufgb/RepoPulse/releases/latest/download/repopulse-windows.zip) |
-| Linux, Raspberry Pi, macOS | [repopulse-linux.tar.gz](https://github.com/dxcufgb/RepoPulse/releases/latest/download/repopulse-linux.tar.gz) |
+| Windows 10/11 (64-bit) | [repopulse-setup.exe](https://github.com/dxcufgb/RepoPulse/releases/latest/download/repopulse-setup.exe) — an installer that brings its own Python |
+| Linux, Raspberry Pi (systemd) | [repopulse-linux.tar.gz](https://github.com/dxcufgb/RepoPulse/releases/latest/download/repopulse-linux.tar.gz) |
+
+Both install RepoPulse as a server that starts with the computer, in the same places on every machine, and keep the
+settings and data apart from the program, so installing a newer release (or an automatic update) never touches them.
 
 ### Windows
 
-1. Install Python 3.9+ from <https://www.python.org/downloads/> and tick
-   **Add python.exe to PATH** in the installer.
-2. Unzip `repopulse-windows.zip` somewhere permanent, for example `C:\RepoPulse`.
-3. Double-click **install.bat**. It creates a private Python environment in
-   `.venv`, installs the two dependencies (Flask and Waitress), creates
-   `config.json` and asks for an admin username and password (skipped when
-   it runs without a console to type in, as from a script).
-4. Double-click **run.bat** and open <http://localhost:8080/>.
+Run **repopulse-setup.exe** (it asks for administrator rights). The wizard asks for the port (8080), an optional
+folder of an earlier RepoPulse (see [Moving an older install](#moving-an-older-install)) and an admin account (or
+leave it empty and create it in the browser), and offers to open the port in Windows Firewall and to turn on
+[automatic updates](#automatic-updates). When it finishes, RepoPulse runs and the browser opens the admin page.
 
-To start RepoPulse automatically with Windows (runs in the background through
-Task Scheduler), open PowerShell **as administrator** in the folder and run:
+| What | Where |
+| --- | --- |
+| Program, with its own Python and packages | `C:\Program Files\RepoPulse\` |
+| Settings | `C:\ProgramData\RepoPulse\config.json` |
+| Database and session key | `C:\ProgramData\RepoPulse\data\` |
+| The server | Task Scheduler task **RepoPulse**: starts at boot, runs as `LOCAL SERVICE`, restarts if it stops |
+| Install log, updater | `C:\ProgramData\RepoPulse\install.log`, `C:\ProgramData\RepoPulse\updater\` |
 
-```powershell
-.\install.ps1 -Service -OpenFirewall     # -OpenFirewall lets other computers reach it
-.\install.ps1 -RemoveService             # undo
-```
+`LOCAL SERVICE` can read the settings and write only the data folder; the program and the settings can only be changed
+by administrators. The command line is `C:\Program Files\RepoPulse\repopulse.cmd` (in an administrator command
+prompt, for example `repopulse.cmd status`). In an administrator PowerShell in that folder, `.\install.ps1` changes
+the installation (`-Port 9000`, `-OpenFirewall`, `-EnableAutoUpdate`; `Get-Help .\install.ps1 -Detailed` lists all).
+Uninstall from **Settings → Apps**; it asks whether to delete the settings and data too.
+
+Unattended: `repopulse-setup.exe /VERYSILENT /SUPPRESSMSGBOXES [/PORT=8080] [/TASKS="firewall,autoupdate"]
+[/MIGRATEFROM=C:\path\to\old]`, with the admin account in the environment variables `REPOPULSE_ADMIN_USERNAME` and
+`REPOPULSE_ADMIN_PASSWORD`; uninstall with `unins000.exe /VERYSILENT [/PURGE]`.
 
 ### Linux / Raspberry Pi
 
 ```bash
-sudo apt install python3 python3-venv     # Debian, Ubuntu, Raspberry Pi OS
 curl -fLO https://github.com/dxcufgb/RepoPulse/releases/latest/download/repopulse-linux.tar.gz
 tar xzf repopulse-linux.tar.gz && cd repopulse-*/
-./install.sh                # environment, config.json, admin account
-./run.sh                    # start in the foreground
+sudo ./install.sh
 ```
 
-To run it as a background service that starts at boot:
+It installs Python 3.9+ and its `venv` module with the package manager if they are missing (it asks first), creates
+the system user `repopulse`, installs and starts the `repopulse` service, asks for the admin account and whether to
+turn on [automatic updates](#automatic-updates). Like the other dxcufgb servers and bots:
+
+| What | Where |
+| --- | --- |
+| Program and its Python environment (owned by root) | `/opt/repopulse/` |
+| Settings (`root:repopulse`, 640) | `/etc/repopulse/config.json` |
+| Database and session key (owned by `repopulse`, 750) | `/var/lib/repopulse/` |
+| The command line | `/usr/local/bin/repopulse` — runs as `repopulse` with the installed settings |
+| The service | `repopulse.service` (sandboxed: it can write only `/var/lib/repopulse`) |
+
+| Task | Command |
+| --- | --- |
+| Status, logs | `systemctl status repopulse` · `journalctl -u repopulse -f` |
+| Restart (after changing the settings) | `sudo systemctl restart repopulse` |
+| Commands | `sudo repopulse status`, `sudo repopulse create-admin`, `sudo repopulse set-password` |
+| Another port | `sudo /opt/repopulse/install.sh --port 9000` |
+| Upgrade | `sudo ./install.sh` from a newer release's folder, or `sudo /opt/repopulse/install.sh --update-now` |
+| Uninstall | `sudo /opt/repopulse/install.sh --uninstall` (`--purge` also deletes the settings, data and user) |
+
+`sudo ./install.sh --help` lists every option. Unattended: `--yes` asks nothing; the admin account comes from
+`REPOPULSE_ADMIN_USERNAME` and `REPOPULSE_ADMIN_PASSWORD`
+(`sudo --preserve-env=REPOPULSE_ADMIN_USERNAME,REPOPULSE_ADMIN_PASSWORD ./install.sh --yes`).
+
+### Moving an older install
+
+Before these installers, RepoPulse ran from the folder it was unpacked in (for example `~/Downloads/repopulse-1.1.0`
+or `C:\Users\you\Downloads\repopulse-1.1.0`), with `data/` and `config.json` inside it. When the new install has no
+data yet, both installers look for such a folder — the one `install.sh` runs from, the folder of an existing
+`repopulse.service` or **RepoPulse** startup task, and RepoPulse folders in the home folders (Downloads, Desktop,
+Documents), `/opt` and `/srv` — and, from the most recently used one, copy:
+
+- the database (a consistent copy, even while the old RepoPulse still runs) with every repository, its history, the
+  dashboard layouts and the admin accounts;
+- the session key, so you stay logged in;
+- the settings of its `config.json` (port, `behind_proxy`, `secure_cookies` …; the data folder becomes the new one).
+
+The old startup service or task is replaced by the new one, the old folder is not changed apart from a `MOVED.txt`
+in its data folder that says where the data went; delete it once everything is there. Choose the folder yourself
+with `--migrate-from DIR` (Linux) or the wizard's **Earlier RepoPulse** page / `/MIGRATEFROM=DIR` (Windows), or skip
+the search with `--no-migrate` / `-NoMigrate`. On Linux the files of the old folder are read as their owner, never as
+root.
+
+### Without the installer
+
+On macOS, a Linux without systemd, or for development, run it from the source folder:
 
 ```bash
-./install.sh --service           # installs and starts repopulse.service (asks for sudo)
-journalctl -u repopulse -f       # logs
-./install.sh --remove-service    # undo
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python -m repopulse create-admin
+.venv/bin/python -m repopulse serve          # config.json and data/ in this folder
 ```
-
-Use `--port 9000` with either installer to pick another port than 8080.
 
 ## First steps
 
 1. Open `/admin` and log in. If you skipped the admin account during install,
-   open `http://localhost:8080/admin` **on the server itself** to create it (for
-   safety this is refused from other machines), or run
-   `python -m repopulse create-admin`.
+   open `http://localhost:8080/admin` **on the server itself** to create it, or run
+   `sudo repopulse create-admin` (Linux) / `repopulse.cmd create-admin` (Windows, as administrator). For safety the
+   page is refused from other machines, through a reverse proxy, and under any other address than `localhost`,
+   `127.0.0.1` or `[::1]` (set `allow_remote_setup` to allow it).
 2. Under **Repositories**, paste repositories (`owner/name` or GitHub links,
    one per line) or use **Browse a user or organisation**. They are collected
    straight away.
@@ -220,7 +273,8 @@ Until you save anything, repository pages use a starter layout.
   download counts.
 - **Counting only some files:** a repository's *Files to count* setting takes
   patterns such as `*.zip`, `module.zip, *.exe`, or exclusions such as
-  `!module.json`. Changing it recalculates the whole history. For FoundryVTT
+  `!module.json` (`*` and `?` are wildcards; `[` and `]` match themselves).
+  Changing it recalculates the whole history. For FoundryVTT
   modules, `*.zip` is usually what you want: the `module.json` manifest is
   typically fetched on every update check, which inflates its count.
 
@@ -231,103 +285,111 @@ about 30 repositories per collection (two requests each). With a token it is 5,0
 private repositories become readable. A fine-grained personal access token with
 read-only access to public repositories is enough
 (GitHub → Settings → Developer settings → Personal access tokens). The token is
-stored in the database on your server and never sent to the browser.
+stored in the database on your server, never sent to the browser, and sent to GitHub only as a header (a redirect to
+another host drops it).
 
 ## Configuration
 
-`config.json` holds the server settings (everything else is edited in the admin
-area). It is plain UTF-8 JSON (a byte-order mark, as Notepad or Windows PowerShell
-may add, is fine). Each value can also be set with an environment variable such as
-`REPOPULSE_PORT=9000`.
+`config.json` holds the server settings (everything else is edited in the admin area): `/etc/repopulse/config.json`
+on Linux, `C:\ProgramData\RepoPulse\config.json` on Windows (restart RepoPulse after changing it), `config.json` next
+to the program when it runs from a folder. `python -m repopulse --config FILE` (or the environment variable
+`REPOPULSE_CONFIG`) names another file; a relative `data_dir` is relative to the file's folder. It is plain UTF-8
+JSON (a byte-order mark, as Notepad or Windows PowerShell may add, is fine). Each value can also be set with an
+environment variable such as `REPOPULSE_PORT=9000`.
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `host` | `0.0.0.0` | Network address to listen on. `127.0.0.1` = this computer only. |
 | `port` | `8080` | Port number. |
-| `data_dir` | `data` | Folder for the database and the session key. |
+| `data_dir` | `data` | Folder for the database and the session key (the installers set it). |
 | `behind_proxy` | `false` | Set to `true` behind nginx, Caddy, IIS or similar so client addresses and https are detected. |
+| `trusted_proxies` | `[]` | With `behind_proxy`: addresses or networks (`"10.0.0.5"`, `"10.0.0.0/8"`) of the proxies whose `X-Forwarded-*` headers count. This computer always counts; from anyone else the headers are ignored. |
 | `secure_cookies` | `false` | Set to `true` when the site is served over https. |
 | `allow_remote_setup` | `false` | Allow creating the first admin account from another computer. |
 | `github_api_url` | `https://api.github.com` | Change for GitHub Enterprise Server. |
-| `threads` | `8` | Web server worker threads. |
+| `threads` | `8` | Web server worker threads (1–256). |
 
 If the dashboard is reachable from the internet, put it behind a reverse proxy
-with https and set `behind_proxy` and `secure_cookies` to `true`. Example for
+with https and set `behind_proxy` and `secure_cookies` to `true`, and let RepoPulse listen on `127.0.0.1` only (or
+list the proxy in `trusted_proxies`), so nobody can reach it around the proxy. Example for
 Caddy: `stats.example.com { reverse_proxy localhost:8080 }`.
 
 ## Command line
 
-Run these in the RepoPulse folder with `.venv/bin/python` (Linux) or
-`.venv\Scripts\python` (Windows):
+Installed: `sudo repopulse <command>` on Linux, `"C:\Program Files\RepoPulse\repopulse.cmd" <command>` in an
+administrator command prompt on Windows; both use the installed settings. From a source folder:
+`.venv/bin/python -m repopulse <command>`.
 
 ```
-python -m repopulse serve [--port 9000] [--no-scheduler]
-python -m repopulse collect          # collect now, e.g. from cron
-python -m repopulse create-admin
-python -m repopulse set-password     # also the way to reset a forgotten password
-python -m repopulse status
-python -m repopulse check-update     # exit 10 = a newer release exists, 0 = up to date, 1 = could not check
-python -m repopulse set-notify       # update e-mails: addresses and mail server (asks; --from-env reads REPOPULSE_*)
-python -m repopulse test-email
+repopulse collect          # collect now, e.g. from cron
+repopulse create-admin     # unattended: REPOPULSE_ADMIN_USERNAME and REPOPULSE_ADMIN_PASSWORD
+repopulse set-password     # also the way to reset a forgotten password
+repopulse status
+repopulse check-update     # exit 10 = a newer release exists, 0 = up to date, 1 = could not check
+repopulse set-notify       # update e-mails: addresses and mail server (asks; --from-env reads REPOPULSE_*)
+repopulse test-email
+repopulse serve [--host 127.0.0.1] [--port 9000] [--no-scheduler]   # what the service runs
+repopulse --config FILE ... / --version
 ```
 
 ## Data and backups
 
-Everything lives in `data/repopulse.db` (plus `data/secret.key`, which signs
-login sessions). Copy the `data` folder to back up; the admin Settings page and
-the public dashboard also offer a CSV export.
+Everything lives in `repopulse.db` in the data folder (`/var/lib/repopulse`, `C:\ProgramData\RepoPulse\data`, or
+`data/` next to the program), plus `secret.key`, which signs login sessions. Copy that folder to back up (stop
+RepoPulse first, or copy the `.db-wal` file too); the admin Settings page and the public dashboard also offer a CSV
+export.
 
 ## Updating
 
-**By hand:** stop RepoPulse, replace the program files (keep `data/` and `config.json`),
-run the installer again, start it.
+**By hand:** run the newer release's installer: `sudo ./install.sh` in its folder (Linux) or its `setup.exe`
+(Windows). It replaces the program and keeps the settings and the data.
 
 ### Automatic updates
 
 Off by default. When on, the machine checks once a day whether
 [dxcufgb/RepoPulse](https://github.com/dxcufgb/RepoPulse/releases) has a newer release and, if so, installs it.
-They need RepoPulse installed as a service (`--service` / `-Service`) from a release archive (a git checkout is
-updated with `git pull`, never automatically).
+They are for the installed server (a git checkout is updated with `git pull`, never automatically).
 
-| | Linux (systemd) | Windows (PowerShell as administrator) |
+| | Linux (`sudo /opt/repopulse/install.sh …`) | Windows (administrator PowerShell in `C:\Program Files\RepoPulse`) |
 | --- | --- | --- |
-| turn on while installing | `./install.sh --service --auto-update` (a first install asks) | `.\install.ps1 -Service -AutoUpdate` (a first install asks) |
-| turn on later | `./install.sh --enable-auto-update` | `.\install.ps1 -EnableAutoUpdate` |
-| turn off | `./install.sh --disable-auto-update` | `.\install.ps1 -DisableAutoUpdate` |
-| check only (exit 0 = up to date, 10 = available) | `./install.sh --check-update` | `.\install.ps1 -CheckUpdate` |
-| update now | `./install.sh --update-now`, or **Check for update**, **Update now** under Admin, Settings | `.\install.ps1 -UpdateNow`, or the admin page |
-| log | `journalctl -u repopulse-update` | `C:\ProgramData\RepoPulse\auto-update.log` |
+| turn on while installing | `--auto-update` (a first install asks) | the wizard's **Install new RepoPulse releases automatically** |
+| turn on later | `--enable-auto-update` | `.\install.ps1 -EnableAutoUpdate` |
+| turn off | `--disable-auto-update` | `.\install.ps1 -DisableAutoUpdate` |
+| check only (exit 0 = up to date, 10 = available) | `--check-update` | `.\install.ps1 -CheckUpdate` |
+| update now | `--update-now`, or **Check for update**, **Update now** under Admin, Settings | `.\install.ps1 -UpdateNow`, or the admin page |
+| log | `journalctl -u repopulse-update` | `C:\ProgramData\RepoPulse\updater\auto-update.log` |
 
-Re-running the installer keeps the choice (`--no-auto-update` / `-NoAutoUpdate` turn it off while re-installing);
-`--remove-service` / `-RemoveService` also removes the updates. Linux: the timer `repopulse-update.timer` (daily,
+Installing again keeps the choice (`--no-auto-update` / `-NoAutoUpdate` turn it off); uninstalling removes them. Linux: the timer `repopulse-update.timer` (daily,
 up to 6 hours of random delay) starts `repopulse-update.service`. Windows: the task `RepoPulse-Update` runs daily
 at 03:00 plus up to 6 hours. Admin, Settings, Updates shows the installed version, whether updates are on and
 how the last one went.
 
 **What an update does:** it asks `https://api.github.com/repos/dxcufgb/RepoPulse/releases/latest` (drafts and
 pre-releases never count) and only installs a strictly newer version. It downloads `SHA256SUMS.txt` and
-`repopulse-<version>-linux.tar.gz` (Linux) or `-windows.zip` (Windows), refuses anything that is not HTTPS, larger
-than 50 MB, or does not match its SHA-256, and unpacks it refusing paths outside the archive's folder. It then
-copies the current program files to `data/update-backup`, copies the release over the installation (never
-`config.json`, `data/` or `.venv`), updates the Python packages, restarts RepoPulse and waits for the new version
-to answer. If anything fails, the previous files are put back and RepoPulse is restarted; if that also fails, the
-log says `ROLLBACK FAILED` and how to restore the backup by hand. Only one update runs at a time.
+`repopulse-<version>-linux.tar.gz` (Linux) or `repopulse-<version>-setup.exe` (Windows), refuses anything that is not
+HTTPS, larger than 50 MB, or does not match its SHA-256, and unpacks the archive refusing paths outside its folder. It
+then backs up the program folder (`/var/backups/repopulse-update/`, `C:\ProgramData\RepoPulse\updater\backup`), runs
+the release's own installer (`install.sh --yes`, `setup.exe /VERYSILENT`: the same steps as a manual upgrade, which
+keep the settings and the data) and waits for the new version to answer. If it does not, the backup is put back and
+RepoPulse is restarted; if that also fails, the log says `ROLLBACK FAILED` and how to restore the backup by hand.
+Only one update runs at a time.
 
-**Who runs what (Linux):** the updater runs as root from a root-owned copy in `/usr/local/lib/repopulse-update/`
-(the installer copies it there; each successful update refreshes it from the verified release) with the system
-Python, settings in `/etc/repopulse/auto-update.conf`. It never runs or parses anything the account RepoPulse runs
-as can change: every copy, `pip` and Python step inside the installation folder runs as that account (`runuser`),
-and root only restarts the service. On Windows RepoPulse and the updater run as SYSTEM, like the startup task.
+**Who runs what:** on Linux the updater runs as root from a root-owned copy in `/usr/local/lib/repopulse-update/`
+(each install refreshes it) with the system Python, settings in `/etc/repopulse/auto-update.conf`. Everything it runs
+or reads belongs to root — the program, the settings, the verified release; the service account `repopulse` can
+write only its data folder, and the result is recorded through `repopulse update-event`, which runs as that account.
+On Windows the updater runs as SYSTEM from `C:\ProgramData\RepoPulse\updater\` (Administrators and SYSTEM only)
+and RepoPulse itself as `LOCAL SERVICE`.
 
 **Update now** on the admin page does not update anything itself (RepoPulse has no rights to): on Linux it writes
-the time into `data/update-request`, which the systemd path unit `repopulse-update-now.path` watches; on Windows it
-starts the task `RepoPulse-UpdateNow`. Either runs the same update as the daily one. It can be asked for again
+the time into `/var/lib/repopulse/update-request`, which the systemd path unit `repopulse-update-now.path` watches;
+on Windows it starts the task `RepoPulse-UpdateNow` (the only task `LOCAL SERVICE` may start). Either runs the same update as the daily one. It can be asked for again
 after two minutes. The page reloads when the new version answers.
 
 **Token (optional).** The repository is public, so no GitHub token is needed (GitHub allows 60 requests an hour
 per address; a run needs at most three). To use one anyway, set `UPDATER_GITHUB_TOKEN` in the environment when
-turning updates on (Linux: `sudo --preserve-env=UPDATER_GITHUB_TOKEN ./install.sh --enable-auto-update`); it is
-stored in `/etc/repopulse/updater-token` (root only) or `C:\ProgramData\RepoPulse\updater-token`
+turning updates on (Linux: `sudo --preserve-env=UPDATER_GITHUB_TOKEN /opt/repopulse/install.sh --enable-auto-update`); it is
+stored in `/etc/repopulse/updater-token` (root only) or `C:\ProgramData\RepoPulse\updater\updater-token`
 (Administrators and SYSTEM), sent only to `api.github.com` and never logged. If GitHub rejects it, the run goes on
 without it. RepoPulse's own token (Settings) is not used for updates.
 
@@ -344,7 +406,7 @@ no e-mails. A failure to send is shown under Updates and never changes the outco
 e-mails you every day until it is fixed.)
 
 Set the addresses and the mail server on that page (**Send test e-mail** tries them), with
-`python -m repopulse set-notify`, `./install.sh --set-notify` / `.\install.ps1 -SetNotify`, or when turning updates
+`repopulse set-notify`, `sudo /opt/repopulse/install.sh --set-notify` / `.\install.ps1 -SetNotify`, or when turning updates
 on (the installer asks; unattended installs read `REPOPULSE_NOTIFY_EMAILS` (comma separated),
 `REPOPULSE_SMTP_HOST`, `REPOPULSE_SMTP_PORT`, `REPOPULSE_SMTP_SECURITY` (`starttls`, `tls` or `none`),
 `REPOPULSE_SMTP_USER`, `REPOPULSE_SMTP_PASSWORD` and `REPOPULSE_SMTP_FROM`). The mail goes out with Python's
@@ -354,12 +416,18 @@ TLS, so `none` is for a local relay without login. For Gmail use `smtp.gmail.com
 
 ## Security notes
 
-- Passwords are hashed (PBKDF2-SHA256, 600,000 rounds). Five failed logins from
-  one address lock that address out for five minutes.
+- Passwords are hashed (PBKDF2-SHA256, 600,000 rounds). Five failed logins (or wrong
+  current passwords when changing it) from one address lock that address out for five minutes.
 - Admin requests need both the session cookie and a CSRF token; the page sends a
   strict Content-Security-Policy.
-- Changing a password (in Settings or with `set-password`) logs out every other
-  session of that account.
+- Sessions are kept on the server as well as in the cookie: **Log out** ends the session for good, so a copy of the
+  cookie stops working at once, and changing a password (in Settings or with `set-password`) logs out every other
+  session of that account, for the admin pages and for hidden repositories alike. Sessions last at most 30 days.
+  (Updating from a version without server-side sessions logs everyone out once.)
+- `X-Forwarded-*` headers count only with `behind_proxy` and only from this computer or `trusted_proxies`.
+- The GitHub token is sent only to the configured API address: a redirect to another host drops it.
+- The installed server runs as its own unprivileged account (`repopulse` on Linux, `LOCAL SERVICE` on Windows)
+  that can write only its data folder; the program and the settings belong to root / the administrators.
 - `serve` warns when it listens on a network address over plain HTTP: put it
   behind a reverse proxy with https (see Configuration) or bind it to `127.0.0.1`.
 - The public dashboard can be switched off in Settings, which puts the whole
@@ -377,8 +445,9 @@ The tests need no network: GitHub is faked. Every push and pull request runs the
 `.github/workflows/`:
 
 - **CI** (`ci.yml`): the tests on Python 3.9 and 3.13 on Linux and Windows, shellcheck, PSScriptAnalyzer on
-  `install.ps1`, a real `./install.sh --service` (systemd) and `.\install.ps1 -Service` (Task Scheduler) install
-  that must start and answer, and the release build.
+  `packaging/windows/*.ps1`, real installs that must move an older RepoPulse's data, start, answer, upgrade in place
+  and uninstall — the release archive's `install.sh` (systemd) and the Inno Setup installer (Task Scheduler) — and
+  the release build.
 - **Security** (`security.yml`, also weekly): gitleaks over the whole history, Semgrep, and `pip-audit` on
   `requirements.txt`. The same checks locally:
 
@@ -403,11 +472,14 @@ week each. Bugs and ideas go in the issue templates; security problems are repor
 ### Releasing
 
 Actions → **Release** → Run workflow → type the version (for example `1.2.0`; `1.2.0-rc.1` makes a pre-release).
-It runs the whole CI, builds `repopulse-<version>-linux.tar.gz` and `repopulse-<version>-windows.zip` (plus the
-same files as `repopulse-linux.tar.gz` / `repopulse-windows.zip`, so
-`https://github.com/dxcufgb/RepoPulse/releases/latest/download/repopulse-linux.tar.gz` is always the newest) with
-the version stamped in, and `SHA256SUMS.txt`, and publishes the release. Nobody edits the version in
-`repopulse/__init__.py` by hand. `scripts/build-release.sh dist 1.2.0` builds the same files locally.
+It runs the whole CI, builds `repopulse-<version>-linux.tar.gz` (`scripts/build-release.sh`) and, on a Windows
+runner, `repopulse-<version>-setup.exe` (`packaging/windows/build-setup.ps1`: the program, the newest embeddable
+Python 3.13 from python.org — its signature is checked — the packages as Windows wheels, and `RepoPulse.iss` compiled
+with Inno Setup 6), plus the same files as `repopulse-linux.tar.gz` / `repopulse-setup.exe` (so
+`https://github.com/dxcufgb/RepoPulse/releases/latest/download/repopulse-setup.exe` is always the newest) with the
+version stamped in, and `SHA256SUMS.txt` over all of them, and publishes the release. Nobody edits the version in
+`repopulse/__init__.py` by hand. Locally: `scripts/build-release.sh dist 1.2.0` and, on Windows,
+`.\packaging\windows\build-setup.ps1 -Version 1.2.0`. A release published by hand must tag a commit on `main`.
 
 ### The GitHub repository
 

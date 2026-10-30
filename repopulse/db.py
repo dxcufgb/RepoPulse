@@ -23,7 +23,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS repos (
@@ -87,6 +87,15 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     created_at    TEXT NOT NULL,
     last_login    TEXT
+);
+
+-- v3: the signed-in sessions. The cookie carries a random id; only its SHA-256 is stored. Logging out deletes the
+-- row, so a copied cookie stops working at once; changing a password deletes the account's other rows.
+CREATE TABLE IF NOT EXISTS sessions (
+    id         TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS runs (
@@ -194,6 +203,15 @@ class Database:
             (key, json.dumps(value)),
         )
 
+    def set_settings(self, values: dict[str, Any]) -> None:
+        """Several settings in one transaction: all of them are saved or none."""
+        if not values:
+            return
+        with self.transaction() as con:
+            for key, value in values.items():
+                con.execute("INSERT INTO settings(key, value) VALUES(?, ?) "
+                            "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, json.dumps(value)))
+
     def all_settings(self) -> dict[str, Any]:
         out = dict(DEFAULT_SETTINGS)
         for row in self.query("SELECT key, value FROM settings"):
@@ -204,26 +222,36 @@ class Database:
         return out
 
 
+def literal_brackets(pattern: str) -> str:
+    """"[" and "]" match themselves. SQLite GLOB and Python's fnmatch disagree on character classes ("[!x]" negates
+    in fnmatch, "[^x]" in GLOB), so the file filter has none and both sides get the same "[[]" escape."""
+    return pattern.replace("[", "[[]")
+
+
+def split_filter(asset_filter: str) -> tuple[list[str], list[str]]:
+    """(includes, excludes), lower-case, with "[" escaped; a lone "!" is ignored."""
+    includes, excludes = [], []
+    for part in (asset_filter or "").replace(";", ",").split(","):
+        part = part.strip()
+        if part.startswith("!"):
+            if part[1:].strip():
+                excludes.append(literal_brackets(part[1:].strip().lower()))
+        elif part:
+            includes.append(literal_brackets(part.lower()))
+    return includes, excludes
+
+
 def glob_clause(asset_filter: str) -> tuple[str, list[str]]:
     """Turn "*.zip, module.json" into an SQL fragment using SQLite GLOB.
 
     Patterns starting with "!" exclude matching assets, e.g. "!module.json".
     """
-    includes, excludes = [], []
-    for part in (asset_filter or "").replace(";", ",").split(","):
-        part = part.strip()
-        if not part:
-            continue
-        if part.startswith("!"):
-            if part[1:].strip():
-                excludes.append(part[1:].strip())
-        else:
-            includes.append(part)
+    includes, excludes = split_filter(asset_filter)
     sql, params = "", []
     if includes:
         sql += " AND (" + " OR ".join("lower(asset) GLOB ?" for _ in includes) + ")"
-        params += [p.lower() for p in includes]
+        params += includes
     for pattern in excludes:
         sql += " AND lower(asset) NOT GLOB ?"
-        params.append(pattern.lower())
+        params.append(pattern)
     return sql, params

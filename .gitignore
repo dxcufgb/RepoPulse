@@ -3,3 +3,10 @@ data/
 config.json
 __pycache__/
 *.pyc
+dist/
+venv/
+.env
+*.db
+*.db-wal
+*.db-shm
+secret.key

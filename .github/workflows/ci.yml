@@ -1,9 +1,10 @@
 # Runs on every push and pull request, and as the "ci" job of release.yml (workflow_call) before anything is published:
 #   - the unit tests (standard library unittest) on the oldest and newest supported Python, on Linux and Windows
-#   - shellcheck on the Linux scripts, PSScriptAnalyzer and a parse check on install.ps1
-#   - a real ./install.sh --service on the Ubuntu runner (systemd) and .\install.ps1 -Service on the Windows runner
-#     (Task Scheduler): RepoPulse must start and answer, and the service must go away again
-#   - the release build (scripts/build-release.sh): the archives, the stamped version, the checksums, reproducibility
+#   - shellcheck on the Linux scripts, PSScriptAnalyzer and a parse check on packaging/windows/*.ps1
+#   - real installs that move an older RepoPulse's data: the release archive's install.sh on the Ubuntu runner (systemd,
+#     /opt + /etc + /var/lib, automatic updates) and the Inno Setup installer built by packaging/windows/build-setup.ps1
+#     on the Windows runner (Task Scheduler, LOCAL SERVICE); both must start, answer, update in place and uninstall
+#   - the release build (scripts/build-release.sh): the archive, the stamped version, the checksums, reproducibility
 # The job names are required status checks (.github/ruleset-protect-main.json): keep them in step.
 
 name: CI
@@ -21,7 +22,8 @@ permissions:
 # the same ref never cancel each other
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # superseded pushes to a branch are cancelled, never runs on main (its badge and history must show every merge)
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:
@@ -65,7 +67,7 @@ jobs:
           persist-credentials: false
 
       - name: Shellcheck the scripts
-        run: shellcheck install.sh run.sh auto-update.sh scripts/*.sh
+        run: shellcheck install.sh auto-update.sh scripts/*.sh
 
   powershell:
     name: PSScriptAnalyzer
@@ -78,24 +80,24 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      # PSScriptAnalyzer ships with the runner image; install.ps1 itself targets Windows PowerShell 5.1.
+      # PSScriptAnalyzer ships with the runner image; the scripts themselves target Windows PowerShell 5.1.
       - name: Analyze the Windows scripts
         shell: pwsh
         run: |
           $failed = $false
-          foreach ($file in Get-ChildItem *.ps1) {
+          foreach ($file in Get-ChildItem packaging/windows/*.ps1) {
             $tokens = $null; $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
             if ($errors) { $errors | ForEach-Object { Write-Output "::error file=$($file.Name)::$_" }; $failed = $true }
           }
-          $results = Get-ChildItem *.ps1 | ForEach-Object { Invoke-ScriptAnalyzer -Path $_.FullName -Severity Warning, Error }
+          $results = Get-ChildItem packaging/windows/*.ps1 | ForEach-Object { Invoke-ScriptAnalyzer -Path $_.FullName -Severity Warning, Error }
           $results | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
           if ($results -or $failed) { exit 1 }
 
   linux-install:
     name: install.sh (systemd)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       PORT: "8099"
     steps:
@@ -105,70 +107,85 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      # with the system Python, like a real install; no terminal, so the admin account is skipped. Without .git, like
-      # a folder unpacked from a release archive (the installer does not set up automatic updates for a git checkout).
-      - name: Install as a systemd service, with automatic updates
+      # like a release from before the server install: unpacked in Downloads, started from there, its own config.json
+      - name: An older RepoPulse in the home folder (the installer moves its data)
         run: |
-          rm -rf .git
-          ./install.sh --service --auto-update --port "$PORT" < /dev/null
+          old="$HOME/Downloads/repopulse-old"
+          mkdir -p "$old"
+          git archive HEAD repopulse requirements.txt | tar -x -C "$old"
+          python3 -m venv "$old/.venv"
+          "$old/.venv/bin/pip" install -q -r "$old/requirements.txt"
+          printf '{"port": 8123, "behind_proxy": true}\n' > "$old/config.json"
+          (cd "$old" && .venv/bin/python -m repopulse create-admin --username olduser --password 'correct horse battery')
+          test -f "$old/data/repopulse.db"
 
-      - name: RepoPulse answers
+      - name: Install from the release archive, with automatic updates
+        run: |
+          ./scripts/build-release.sh "$RUNNER_TEMP/dist" 9.8.7
+          cd "$RUNNER_TEMP" && tar xzf dist/repopulse-9.8.7-linux.tar.gz && cd repopulse-9.8.7
+          sudo ./install.sh --yes --auto-update --port "$PORT" < /dev/null
+
+      - name: RepoPulse runs as a service with the moved data
         run: |
           base="http://localhost:$PORT"
-          code=000
-          for _ in $(seq 1 30); do
-            code="$(curl -s -o /dev/null -w '%{http_code}' "$base/" || true)"
-            [ "$code" = 200 ] && break
-            sleep 1
-          done
-          test "$code" = 200
+          curl -sf "$base/api/site" | jq -e '.version == "9.8.7" and (.needs_setup | not)'
           systemctl is-active repopulse
-          grep -q "^User=$(id -un)$" /etc/systemd/system/repopulse.service
-          # the first-run setup is offered on the server itself, the admin API needs a login
-          curl -sf "$base/api/site" | jq -e '.needs_setup and .setup_allowed and (.version | length > 0)'
+          grep -qx 'User=repopulse' /etc/systemd/system/repopulse.service
           test "$(curl -s -o /dev/null -w '%{http_code}' "$base/api/admin/repos")" = 401
-          curl -sf "$base/api/dashboard" > /dev/null
-          # the service, running as this user, created the database in the folder's own data/
-          test -f data/repopulse.db
-          test "$(stat -c %U data/repopulse.db)" = "$(id -un)"
-          .venv/bin/python -m repopulse status
-
-      - name: Running the installer again keeps the configuration
-        run: |
-          ./install.sh < /dev/null
-          python3 -c 'import json, os; assert json.load(open("config.json"))["port"] == int(os.environ["PORT"])'
+          # root owns the program; the service account writes only its data folder
+          test "$(stat -c '%U:%G %a' /opt/repopulse)" = "root:root 755"
+          test "$(sudo stat -c '%U:%G %a' /etc/repopulse/config.json)" = "root:repopulse 640"
+          test "$(sudo stat -c '%U:%G %a' /var/lib/repopulse)" = "repopulse:repopulse 750"
+          test "$(sudo stat -c %U /var/lib/repopulse/repopulse.db)" = repopulse
+          test -z "$(sudo find /opt/repopulse ! -type l \( ! -user root -o -perm /022 \) -print)"
+          # the older install's settings, admin account and session key came along; its folder says where they went
+          sudo jq -e '.port == 8099 and .behind_proxy == true and .data_dir == "/var/lib/repopulse"' /etc/repopulse/config.json
+          sudo repopulse status | grep -qx 'Admin accounts: 1'
+          sudo -u repopulse python3 -c 'import sqlite3; print(sqlite3.connect("/var/lib/repopulse/repopulse.db").execute("SELECT username FROM users").fetchone()[0])' | grep -qx olduser
+          sudo test -f /var/lib/repopulse/secret.key
+          test -f "$HOME/Downloads/repopulse-old/data/MOVED.txt"
 
       - name: Automatic updates are set up
         run: |
           systemctl is-enabled repopulse-update.timer repopulse-update-now.path
           systemctl is-active repopulse-update-now.path
-          sudo grep -qx "APP_DIR=$PWD" /etc/repopulse/auto-update.conf
           test "$(stat -c %U /usr/local/lib/repopulse-update/auto-update.sh)" = root
-          test "$(stat -c %U data/update-request)" = "$(id -un)"
+          test "$(sudo stat -c %U /var/lib/repopulse/update-request)" = repopulse
           # check only: GitHub answers (0 or 10), or there is no release / no network (1); never a crash
-          set +e; ./install.sh --check-update; rc=$?; set -e
+          set +e; sudo /opt/repopulse/install.sh --check-update; rc=$?; set -e
           case "$rc" in 0|1|10) ;; *) echo "unexpected exit code $rc"; exit 1 ;; esac
-          # a re-run of --service keeps them on
-          ./install.sh --service < /dev/null
-          systemctl is-enabled repopulse-update.timer
-          ./install.sh --disable-auto-update
+          sudo /opt/repopulse/install.sh --disable-auto-update
           test ! -e /etc/systemd/system/repopulse-update.timer
           test ! -e /etc/repopulse/auto-update.conf
-          test ! -e data/update-request
-          ./install.sh --enable-auto-update < /dev/null
+          sudo /opt/repopulse/install.sh --enable-auto-update < /dev/null
           systemctl is-enabled repopulse-update.timer
 
-      - name: Remove the service
+      - name: Installing again keeps the settings, the data and automatic updates
         run: |
-          ./install.sh --remove-service
+          cd "$RUNNER_TEMP/repopulse-9.8.7"
+          sudo ./install.sh --yes < /dev/null
+          sudo jq -e '.port == 8099' /etc/repopulse/config.json
+          systemctl is-enabled repopulse-update.timer
+          curl -sf "http://localhost:$PORT/api/site" | jq -e '.needs_setup | not'
+
+      - name: Uninstall, then purge
+        run: |
+          sudo /opt/repopulse/install.sh --uninstall
           test ! -e /etc/systemd/system/repopulse.service
+          test ! -e /etc/systemd/system/repopulse-update.timer
+          test ! -e /opt/repopulse
           if systemctl is-active --quiet repopulse; then echo "repopulse still runs"; exit 1; fi
-          test -f data/repopulse.db
+          sudo test -f /var/lib/repopulse/repopulse.db
+          cd "$RUNNER_TEMP/repopulse-9.8.7"
+          sudo ./install.sh --uninstall --purge
+          sudo test ! -e /var/lib/repopulse
+          test ! -e /etc/repopulse
+          if id repopulse 2>/dev/null; then echo "the repopulse user is still there"; exit 1; fi
 
   windows-install:
     name: install.ps1 (Task Scheduler)
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       PORT: "8099"
     steps:
@@ -182,62 +199,98 @@ jobs:
         with:
           python-version: "3.13"
 
-      # Windows PowerShell 5.1, as install.bat runs it; its input is a pipe, so the admin account is skipped
-      - name: Install as a startup task
+      # like a release from before the Windows installer: unzipped in Downloads, started from there
+      - name: An older RepoPulse in Downloads (the installer moves its data)
         shell: powershell
         run: |
-          '' | powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Service -OpenFirewall -Port $env:PORT
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $ErrorActionPreference = 'Stop'
+          $old = "$env:USERPROFILE\Downloads\repopulse-old"
+          New-Item -ItemType Directory -Force -Path $old | Out-Null
+          Copy-Item -Recurse repopulse "$old\repopulse"
+          [IO.File]::WriteAllText("$old\config.json", '{"port": 8123}')
+          python -m pip install -q -r requirements.txt
+          Push-Location $old
+          python -m repopulse create-admin --username olduser --password "correct horse battery"
+          Pop-Location
+          if (-not (Test-Path "$old\data\repopulse.db")) { throw "no old database" }
 
-      - name: RepoPulse answers
+      - name: Build the installer
+        shell: powershell
+        run: .\packaging\windows\build-setup.ps1 -Version 9.8.7 -OutDir dist
+
+      - name: Install silently, with the firewall rule and automatic updates
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # ignored: the moved data brings its own admin account
+          $env:REPOPULSE_ADMIN_USERNAME = 'ciadmin'; $env:REPOPULSE_ADMIN_PASSWORD = 'correct horse battery'
+          $p = Start-Process dist\repopulse-9.8.7-setup.exe -Wait -PassThru -ArgumentList @(
+            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/PORT=$env:PORT", '/TASKS="firewall,autoupdate"', '/LOG=setup.log')
+          Get-Content "$env:ProgramData\RepoPulse\install.log" -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { Get-Content setup.log; throw "the installer ended with exit code $($p.ExitCode)" }
+
+      - name: RepoPulse runs as LOCAL SERVICE with the moved data
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $base = "http://localhost:$env:PORT"
-          $ok = $false
-          foreach ($i in 1..45) {
-            try { if ((Invoke-WebRequest -UseBasicParsing "$base/").StatusCode -eq 200) { $ok = $true; break } } catch { Start-Sleep -Seconds 1 }
-          }
-          if (-not $ok) { Get-ScheduledTask -TaskName RepoPulse | Get-ScheduledTaskInfo | Format-List | Out-String | Write-Output; throw "RepoPulse did not answer on $base" }
-          if ((Get-ScheduledTask -TaskName RepoPulse).State -ne 'Running') { throw "the RepoPulse task is not running" }
-          if (-not (Get-NetFirewallRule -DisplayName RepoPulse -ErrorAction SilentlyContinue)) { throw "no firewall rule" }
           $site = Invoke-RestMethod "$base/api/site"
-          if (-not ($site.needs_setup -and $site.setup_allowed)) { throw "the first-run setup is not offered on the server itself" }
+          if ($site.version -ne '9.8.7' -or $site.needs_setup) { throw "unexpected /api/site: $($site | ConvertTo-Json -Compress)" }
           try { Invoke-WebRequest -UseBasicParsing "$base/api/admin/repos" | Out-Null; throw "the admin API answered without a login" }
           catch { if ($_.Exception.Response.StatusCode.value__ -ne 401) { throw } }
-          if (-not (Test-Path data\repopulse.db)) { throw "no database in data\" }
-
-      - name: Automatic updates
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          Remove-Item -Recurse -Force .git   # like a folder unpacked from a release archive
-          '' | powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -EnableAutoUpdate
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          foreach ($t in 'RepoPulse-Update', 'RepoPulse-UpdateNow') {
-            $task = Get-ScheduledTask -TaskName $t
-            if ($task.Principal.UserId -ne 'SYSTEM') { throw "$t does not run as SYSTEM" }
-          }
-          if (-not (Test-Path "$env:ProgramData\RepoPulse\auto-update.ps1")) { throw "the updater was not copied" }
-          '' | powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -CheckUpdate
+          $task = Get-ScheduledTask -TaskName RepoPulse
+          if ($task.State -ne 'Running') { throw "the RepoPulse task is not running" }
+          $account = (New-Object Security.Principal.SecurityIdentifier 'S-1-5-19').Translate([Security.Principal.NTAccount]).Value
+          if ($account -notlike "*$($task.Principal.UserId)*") { throw "the task runs as $($task.Principal.UserId), not LOCAL SERVICE" }
+          if (-not (Get-NetFirewallRule -DisplayName RepoPulse -ErrorAction SilentlyContinue)) { throw "no firewall rule" }
+          foreach ($t in 'RepoPulse-Update', 'RepoPulse-UpdateNow') { Get-ScheduledTask -TaskName $t | Out-Null }
+          if (-not (Test-Path "$env:ProgramData\RepoPulse\updater\auto-update.ps1")) { throw "the updater was not copied" }
+          $cfg = Get-Content -Raw "$env:ProgramData\RepoPulse\config.json" | ConvertFrom-Json
+          if ($cfg.port -ne [int]$env:PORT) { throw "port $($cfg.port) in config.json" }
+          # the older install's admin account came along; its folder says where the data went
+          $status = & "$env:ProgramFiles\RepoPulse\repopulse.cmd" status
+          if (-not ($status -contains 'Admin accounts: 1')) { throw "status: $status" }
+          $user = & "$env:ProgramFiles\RepoPulse\python\python.exe" -c "import sqlite3, os; print(sqlite3.connect(os.path.join(os.environ['ProgramData'], 'RepoPulse', 'data', 'repopulse.db')).execute('SELECT username FROM users').fetchone()[0])"
+          if ("$user".Trim() -ne 'olduser') { throw "admin account: $user" }
+          if (-not (Test-Path "$env:USERPROFILE\Downloads\repopulse-old\data\MOVED.txt")) { throw "no MOVED.txt in the old folder" }
+          # the service account may write the data folder, not the program or the settings
+          $acl = (Get-Acl "$env:ProgramData\RepoPulse\config.json").Access | Where-Object { $_.IdentityReference -eq $account }
+          if ($acl | Where-Object { $_.FileSystemRights -match 'Write|Modify|FullControl' }) { throw "LOCAL SERVICE can change config.json" }
+          & powershell -NoProfile -ExecutionPolicy Bypass -File "$env:ProgramFiles\RepoPulse\install.ps1" -CheckUpdate
           if (@(0, 1, 10) -notcontains $LASTEXITCODE) { throw "unexpected exit code $LASTEXITCODE" }
-          # GitHub ends a powershell step with the last program's exit code; 1 (no release yet) is fine here
           exit 0
 
-      - name: Remove the startup task
-        shell: powershell
-        run: |
-          '' | powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -RemoveService
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: The task and the firewall rule are gone
+      - name: Installing again keeps the settings, the data and automatic updates
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
+          $p = Start-Process dist\repopulse-setup.exe -Wait -PassThru -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART')
+          if ($p.ExitCode -ne 0) { throw "the installer ended with exit code $($p.ExitCode)" }
+          $site = Invoke-RestMethod "http://localhost:$env:PORT/api/site"
+          if ($site.needs_setup) { throw "the data is gone" }
+          Get-ScheduledTask -TaskName RepoPulse-Update | Out-Null
+          if (-not (Get-NetFirewallRule -DisplayName RepoPulse -ErrorAction SilentlyContinue)) { throw "the firewall rule is gone" }
+
+      - name: Uninstall keeps the data; uninstall with /PURGE removes it
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Uninstall([string[]]$More) {
+            Start-Process "$env:ProgramFiles\RepoPulse\unins000.exe" -Wait -ArgumentList (@('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') + $More)
+            # the uninstaller hands over to a copy of itself; wait for that one
+            foreach ($i in 1..60) { if (-not (Test-Path "$env:ProgramFiles\RepoPulse\unins000.exe")) { break }; Start-Sleep -Seconds 2 }
+          }
+          Uninstall @()
           if (Get-ScheduledTask -TaskName RepoPulse -ErrorAction SilentlyContinue) { throw "the RepoPulse task is still there" }
-          if (Get-NetFirewallRule -DisplayName RepoPulse -ErrorAction SilentlyContinue) { throw "the firewall rule is still there" }
           foreach ($t in 'RepoPulse-Update', 'RepoPulse-UpdateNow') { if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) { throw "$t is still there" } }
-          if (-not (Test-Path data\repopulse.db)) { throw "the data was removed" }
+          if (Get-NetFirewallRule -DisplayName RepoPulse -ErrorAction SilentlyContinue) { throw "the firewall rule is still there" }
+          if (Test-Path "$env:ProgramFiles\RepoPulse\repopulse") { throw "the program is still there" }
+          if (-not (Test-Path "$env:ProgramData\RepoPulse\data\repopulse.db")) { throw "the data was removed" }
+          $p = Start-Process dist\repopulse-setup.exe -Wait -PassThru -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART')
+          if ($p.ExitCode -ne 0) { throw "reinstalling failed" }
+          if ((Invoke-RestMethod "http://localhost:$env:PORT/api/site").needs_setup) { throw "the reinstall lost the data" }
+          Uninstall @('/PURGE')
+          if (Test-Path "$env:ProgramData\RepoPulse") { throw "/PURGE kept $env:ProgramData\RepoPulse" }
 
   release-build:
     name: Release build
@@ -260,21 +313,16 @@ jobs:
         run: |
           cd "$RUNNER_TEMP/a"
           sha256sum --check --strict SHA256SUMS.txt
-          test "$(awk '{print $2}' SHA256SUMS.txt | sort | tr '\n' ' ')" = \
-            "repopulse-9.8.7-linux.tar.gz repopulse-9.8.7-windows.zip repopulse-linux.tar.gz repopulse-windows.zip "
+          test "$(awk '{print $2}' SHA256SUMS.txt | sort | tr '\n' ' ')" = "repopulse-9.8.7-linux.tar.gz repopulse-linux.tar.gz "
           tar -tzf repopulse-9.8.7-linux.tar.gz > tar.txt
-          unzip -Z1 repopulse-9.8.7-windows.zip > zip.txt
-          for list in tar.txt zip.txt; do
-            grep -qx 'repopulse-9.8.7/install.sh' "$list"
-            grep -qx 'repopulse-9.8.7/auto-update.sh' "$list"
-            grep -qx 'repopulse-9.8.7/auto-update.ps1' "$list"
-            grep -qx 'repopulse-9.8.7/repopulse/updater.py' "$list"
-            grep -qx 'repopulse-9.8.7/repopulse/static/vendor/chart.umd.min.js' "$list"
-            if grep -E '/(tests|scripts|\.github|data)/|/config\.json$|/CLAUDE\.md$' "$list"; then
-              echo "::error::repository tooling or local data in $list"
-              exit 1
-            fi
-          done
+          grep -qx 'repopulse-9.8.7/install.sh' tar.txt
+          grep -qx 'repopulse-9.8.7/auto-update.sh' tar.txt
+          grep -qx 'repopulse-9.8.7/repopulse/updater.py' tar.txt
+          grep -qx 'repopulse-9.8.7/repopulse/static/vendor/chart.umd.min.js' tar.txt
+          if grep -E '/(tests|scripts|packaging|\.github|data)/|/config\.json$|/CLAUDE\.md$|\.(ps1|bat|cmd)$' tar.txt; then
+            echo "::error::repository tooling, Windows files or local data in the archive"
+            exit 1
+          fi
           tar -xzf repopulse-9.8.7-linux.tar.gz
           grep -qx '__version__ = "9.8.7"' repopulse-9.8.7/repopulse/__init__.py
           grep -q '?v=9.8.7' repopulse-9.8.7/repopulse/static/index.html

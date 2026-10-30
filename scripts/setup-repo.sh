@@ -79,7 +79,7 @@ done
 VERSION_IN_CODE="$(tr -d '\r' < repopulse/__init__.py | sed -n 's/^__version__ = "\(.*\)"$/\1/p')"
 RELEASE="${RELEASE:-$VERSION_IN_CODE}"
 RELEASE="${RELEASE#v}"
-if [[ $DO_RELEASE -eq 1 && ! "$RELEASE" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+if [[ $DO_RELEASE -eq 1 && ! "$RELEASE" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
   die "'$RELEASE' is not a version like 1.2.3"
 fi
 

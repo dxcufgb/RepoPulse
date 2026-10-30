@@ -9,12 +9,21 @@
   set-notify       set who gets the update e-mails and the mail server (asks, or --from-env)
   test-email       send a test e-mail with the saved settings
   update-event     record the result of an automatic update and e-mail it (used by auto-update.sh/.ps1)
+
+  --config FILE    use this configuration file (the installed service uses
+                   /etc/repopulse/config.json or %ProgramData%\\RepoPulse\\config.json;
+                   the `repopulse` command of an installed server passes it for you)
+
+create-admin and set-password ask for the username and password, or take them from
+--username and the environment variables REPOPULSE_ADMIN_USERNAME / REPOPULSE_ADMIN_PASSWORD
+(for unattended installs; the password never has to appear on a command line).
 """
 from __future__ import annotations
 
 import argparse
 import getpass
 import logging
+import os
 import sys
 
 from . import __version__, auth
@@ -22,8 +31,14 @@ from .config import load_config
 
 
 def _ask_credentials(args, confirm: bool = True) -> tuple[str, str]:
-    username = args.username or input("Admin username: ").strip()
-    password = args.password
+    username = (args.username or os.environ.get("REPOPULSE_ADMIN_USERNAME", "")).strip()
+    password = args.password or os.environ.get("REPOPULSE_ADMIN_PASSWORD", "")
+    if not username or not password:
+        if not sys.stdin.isatty():
+            raise SystemExit("No terminal to ask for the admin account: pass --username and set "
+                             "REPOPULSE_ADMIN_PASSWORD (or REPOPULSE_ADMIN_USERNAME too).")
+    if not username:
+        username = input("Admin username: ").strip()
     if not password:
         while True:
             password = getpass.getpass("Password (min %d characters): " % auth.MIN_PASSWORD)
@@ -38,6 +53,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="repopulse", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--version", action="version", version=f"RepoPulse {__version__}")
+    parser.add_argument("--config", metavar="FILE", help="configuration file (default: config.json in the program "
+                        "folder, or REPOPULSE_CONFIG)")
     sub = parser.add_subparsers(dest="command")
     serve = sub.add_parser("serve", help="start the web server")
     serve.add_argument("--host")
@@ -48,7 +65,8 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("create-admin", "set-password"):
         p = sub.add_parser(name)
         p.add_argument("--username")
-        p.add_argument("--password", help="avoid on shared machines; you will be asked otherwise")
+        p.add_argument("--password", help="avoid: other users can see command lines; you are asked otherwise, "
+                       "or set REPOPULSE_ADMIN_PASSWORD")
     sub.add_parser("status", help="show tracked repos and last run")
     sub.add_parser("check-update", help="ask GitHub whether a newer release exists")
     sn = sub.add_parser("set-notify", help="set the update e-mail recipients and mail server")
@@ -65,7 +83,7 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("waitress.queue").setLevel(logging.ERROR)
-    cfg = load_config()
+    cfg = load_config(args.config)
 
     if command == "serve":
         if args.host:
@@ -83,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  Data:      {cfg.db_path}")
         if auth.user_count(db) == 0:
             print("\n  No admin account yet: open the Admin link on this computer to create one,")
-            print("  or run:  python -m repopulse create-admin")
+            print("  or run:  repopulse create-admin  (python -m repopulse create-admin when not installed)")
         if cfg.host not in ("127.0.0.1", "::1", "localhost") and not cfg.secure_cookies:
             print("\n  WARNING: serving on a network address over plain HTTP — the admin password and")
             print("           session cookie cross the network unencrypted. Put RepoPulse behind HTTPS")
@@ -144,7 +162,6 @@ def main(argv: list[str] | None = None) -> int:
     if command == "set-notify":
         from . import notify
         if args.from_env:
-            import os
             env = {"recipients": "REPOPULSE_NOTIFY_EMAILS", "host": "REPOPULSE_SMTP_HOST", "port": "REPOPULSE_SMTP_PORT",
                    "security": "REPOPULSE_SMTP_SECURITY", "user": "REPOPULSE_SMTP_USER",
                    "password": "REPOPULSE_SMTP_PASSWORD", "sender": "REPOPULSE_SMTP_FROM"}

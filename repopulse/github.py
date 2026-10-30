@@ -1,6 +1,7 @@
 """Tiny GitHub REST client using only the standard library."""
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import urllib.error
@@ -37,6 +38,43 @@ def parse_repo(text: str) -> tuple[str, str]:
     return owner, name
 
 
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parts = urllib.parse.urlsplit(url)
+    scheme = parts.scheme.lower()
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    return scheme, (parts.hostname or "").lower(), port or {"https": 443, "http": 80}.get(scheme)
+
+
+class _RedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follows GitHub's redirects (301 for a renamed repository) but sends the token only to the configured API:
+    urllib would copy the Authorization header to any host, and it never follows https to http."""
+
+    def __init__(self, api_url: str):
+        super().__init__()
+        self.api_origin = _origin(api_url)
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new_origin = _origin(newurl)
+        if _origin(req.full_url)[0] == "https" and new_origin[0] != "https":
+            raise urllib.error.HTTPError(newurl, code, "Refusing a redirect from https to " + new_origin[0],
+                                         headers, fp)
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and new_origin != self.api_origin:
+            for key in [k for k in new.headers if k.lower() == "authorization"]:
+                del new.headers[key]
+            new.unredirected_hdrs.pop("Authorization", None)
+        return new
+
+
+def _open(req: urllib.request.Request, api_url: str, timeout: float):
+    opener = urllib.request.build_opener(_RedirectHandler(api_url))
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- the configured GitHub API base URL plus fixed paths
+    return opener.open(req, timeout=timeout)
+
+
 @dataclass
 class RateLimit:
     remaining: int | None = None
@@ -63,10 +101,10 @@ class GitHubClient:
         if self.token:
             req.add_header("Authorization", f"Bearer {self.token}")
         try:
-            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- the configured GitHub API base URL plus fixed paths
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with _open(req, self.api_url, self.timeout) as resp:
                 headers = {k.lower(): v for k, v in resp.headers.items()}
                 body = resp.read().decode("utf-8")
+            data = json.loads(body) if body else None
         except urllib.error.HTTPError as exc:
             headers = {k.lower(): v for k, v in (exc.headers or {}).items()}
             self._update_rate(headers)
@@ -90,10 +128,20 @@ class GitHubClient:
                               exc.code) from None
         except urllib.error.URLError as exc:
             raise GitHubError(f"Could not reach GitHub: {exc.reason}") from None
-        except TimeoutError:
+        except TimeoutError:  # socket.timeout is an OSError but not a TimeoutError on Python 3.9
             raise GitHubError("GitHub did not answer in time") from None
+        except OSError as exc:
+            if "timed out" in str(exc).lower():
+                raise GitHubError("GitHub did not answer in time") from None
+            raise GitHubError(f"Could not reach GitHub ({type(exc).__name__})") from None
+        except http.client.HTTPException as exc:
+            raise GitHubError(f"The connection to GitHub broke off ({type(exc).__name__})") from None
+        except ValueError:
+            # An invalid header (e.g. a token with a line break) or a response that is not JSON; the exception's
+            # text can contain the header value, so it is never shown.
+            raise GitHubError("Invalid request or response; check the GitHub token and API URL") from None
         self._update_rate(headers)
-        return json.loads(body) if body else None, headers
+        return data, headers
 
     def _update_rate(self, headers: dict) -> None:
         try:

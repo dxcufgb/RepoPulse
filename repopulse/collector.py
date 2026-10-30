@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 
 from .db import Database
-from .github import GitHubClient, GitHubError
+from .github import GitHubClient, GitHubError, parse_repo
 
 log = logging.getLogger("repopulse.collector")
 
@@ -25,7 +25,15 @@ class Collector:
         self.db = db
         self.api_url = api_url
         self._lock = threading.Lock()
+        self._pending_lock = threading.Lock()
+        self.pending: set[int] = set()  # repositories to collect once the current run is done
         self.current_run: int | None = None
+
+    def mark_interrupted(self) -> None:
+        """Runs still 'running' when the server starts were cut off by a stop or crash; close them."""
+        self.db.execute("UPDATE runs SET status = 'failed', finished_at = ?, "
+                        "message = COALESCE(message || char(10), '') || ? WHERE status = 'running'",
+                        (now_iso(), "Interrupted: the server stopped during this run."))
 
     def client(self) -> GitHubClient:
         return GitHubClient(self.api_url, self.db.get_setting("github_token", "") or "")
@@ -42,10 +50,15 @@ class Collector:
         stamp = now_iso()
         with self.db.transaction() as con:
             # GitHub may have renamed/moved the repo; follow it.
-            full = (info.get("full_name") or "").split("/")
-            owner, name = (full[0], full[1]) if len(full) == 2 else (repo["owner"], repo["name"])
-            clash = con.execute("SELECT id FROM repos WHERE owner = ? AND name = ? AND id != ?",
-                                (owner, name, repo["id"])).fetchone()
+            full = info.get("full_name")
+            try:
+                if not isinstance(full, str) or full.count("/") != 1:
+                    raise ValueError(full)
+                owner, name = parse_repo(full)
+            except ValueError:
+                owner, name = repo["owner"], repo["name"]
+            clash = con.execute("SELECT id FROM repos WHERE lower(owner) = lower(?) AND lower(name) = lower(?) "
+                                "AND id != ?", (owner, name, repo["id"])).fetchone()
             if clash:
                 owner, name = repo["owner"], repo["name"]
             con.execute(
@@ -83,10 +96,14 @@ class Collector:
                          int(asset.get("download_count") or 0)))
 
     def run(self, trigger: str = "manual", repo_ids: list[int] | None = None,
-            wait: bool = True) -> int | None:
-        """Collect now. Returns the run id, or None if a run is already going."""
-        if not self._lock.acquire(blocking=False):
-            return None
+            wait: bool = True, queue: bool = False) -> int | None:
+        """Collect now. Returns the run id, or None if a run is already going. With `queue` and `repo_ids`,
+        those repositories are then collected in a run of their own as soon as the current one ends."""
+        with self._pending_lock:
+            if not self._lock.acquire(blocking=False):
+                if queue and repo_ids:
+                    self.pending.update(repo_ids)
+                return None
         try:
             started = now_iso()
             with self.db.transaction() as con:
@@ -115,7 +132,7 @@ class Collector:
                     try:
                         self.collect_repo(client, repo, date)
                         ok += 1
-                    except (GitHubError, ValueError, OSError) as exc:
+                    except (GitHubError, ValueError, OSError, KeyError, TypeError, AttributeError) as exc:
                         failed += 1
                         msg = f"{repo['owner']}/{repo['name']}: {exc}"
                         errors.append(msg)
@@ -143,8 +160,12 @@ class Collector:
                     (now_iso(), status, ok, failed,
                      "\n".join(errors) or None, run_id))
                 self.current_run = None
-                self._lock.release()
+                with self._pending_lock:
+                    queued, self.pending = sorted(self.pending), set()
+                    self._lock.release()
                 log.info("Collection run %s finished: %s ok, %s failed", run_id, ok, failed)
+                if queued:
+                    self.run("repo added", repo_ids=queued, wait=False, queue=True)
 
         if wait:
             work()
@@ -187,8 +208,9 @@ class Scheduler(threading.Thread):
             try:
                 if self.due() and not self.collector.busy:
                     day = datetime.now().strftime("%Y-%m-%d")
-                    self.db.set_setting("last_scheduled_run", day)
-                    self.collector.run("scheduled", wait=True)
+                    # only a run that really started counts; if another just began, try again next time
+                    if self.collector.run("scheduled", wait=True) is not None:
+                        self.db.set_setting("last_scheduled_run", day)
             except Exception:  # pragma: no cover
                 log.exception("Scheduler error")
             self._stop.wait(self.interval)
