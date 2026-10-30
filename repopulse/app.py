@@ -5,10 +5,11 @@ import json
 import logging
 import re
 import secrets
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from flask import Flask, Response, jsonify, request, send_from_directory, session
+from flask import Flask, Response, abort, jsonify, request, send_from_directory, session
 from werkzeug.exceptions import HTTPException
 
 from . import __version__, appearance, auth, notify, stats, updates
@@ -20,6 +21,8 @@ from .github import GitHubClient, GitHubError, parse_repo
 STATIC = Path(__file__).resolve().parent / "static"
 HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+TOKEN_RE = re.compile(r"^[\x21-\x7e]{1,255}$")  # printable ASCII, no spaces or line breaks
+MAX_ID = 2 ** 63 - 1
 log = logging.getLogger("repopulse")
 
 
@@ -30,6 +33,7 @@ class Services:
         self.collector = Collector(self.db, cfg.github_api_url)
         self.scheduler: Scheduler | None = None
         self.throttle = auth.LoginThrottle()
+        self.collector.mark_interrupted()
 
     def start_scheduler(self) -> None:
         if self.scheduler is None:
@@ -63,8 +67,8 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
         BEHIND_PROXY=cfg.behind_proxy,
     )
     if cfg.behind_proxy:
-        from werkzeug.middleware.proxy_fix import ProxyFix
-        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+        # forwarded headers count only from this computer or the configured proxies
+        app.wsgi_app = auth.TrustedProxyFix(app.wsgi_app, getattr(cfg, "trusted_proxies", None) or [])
 
     svc = Services(cfg)
     app.extensions["repopulse"] = svc
@@ -74,11 +78,28 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
 
     # ---------------------------------------------------------------- utils
     def body() -> dict:
-        data = request.get_json(silent=True)
+        try:
+            data = request.get_json(silent=True)
+        except RecursionError:
+            abort(400, description="The request body is nested too deeply")
         return data if isinstance(data, dict) else {}
 
+    def id_list(value) -> list[int] | None:
+        """A JSON list of repository ids, or None when it is anything else."""
+        if not isinstance(value, list):
+            return None
+        out = []
+        for item in value:
+            if isinstance(item, bool) or not isinstance(item, int) or not 0 < item <= MAX_ID:
+                return None
+            out.append(item)
+        return out
+
+    def logged_in() -> bool:
+        return auth.logged_in_user() is not None
+
     def can_view() -> bool:
-        return bool(db.get_setting("public_dashboard", True)) or bool(session.get("uid"))
+        return bool(db.get_setting("public_dashboard", True)) or logged_in()
 
     def repo_or_404(repo_id: int):
         row = db.query_one("SELECT * FROM repos WHERE id = ?", (repo_id,))
@@ -160,7 +181,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
             subtitle=settings["site_subtitle"],
             public=bool(settings["public_dashboard"]),
             user=auth.current_user(),
-            csrf=session.get("csrf") if session.get("uid") else None,
+            csrf=session.get("csrf") if logged_in() else None,
             needs_setup=auth.user_count(db) == 0,
             setup_allowed=auth.user_count(db) == 0 and (cfg.allow_remote_setup or auth.is_local_request()),
             version=__version__,
@@ -172,7 +193,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
     def dashboard():
         if not can_view():
             return jsonify(error="This dashboard is private. Please log in."), 401
-        data = stats.dashboard_data(db, include_hidden=bool(session.get("uid")) and
+        data = stats.dashboard_data(db, include_hidden=logged_in() and
                                     request.args.get("all") == "1")
         data["layout"] = db.get_setting("layout", None)
         data["repo_layout"] = db.get_setting("repo_layout", None)
@@ -185,7 +206,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
         if not can_view():
             return jsonify(error="Please log in"), 401
         row = repo_or_404(repo_id)
-        if row is None or (row["hidden"] and not session.get("uid")):
+        if row is None or (row["hidden"] and not logged_in()):
             return jsonify(error="Unknown repository"), 404
         custom = None
         if row["layout"]:
@@ -203,7 +224,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
         if not can_view():
             return jsonify(error="Please log in"), 401
         row = repo_or_404(repo_id)
-        if row is None or (row["hidden"] and not session.get("uid")):
+        if row is None or (row["hidden"] and not logged_in()):
             return jsonify(error="Unknown repository"), 404
         return jsonify(releases=stats.releases(db, row))
 
@@ -212,7 +233,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
     def export():
         if not can_view():
             return jsonify(error="Please log in"), 401
-        text = stats.export_csv(db, include_hidden=bool(session.get("uid")))
+        text = stats.export_csv(db, include_hidden=logged_in())
         stamp = datetime.now().strftime("%Y-%m-%d")
         return Response(text, mimetype="text/csv", headers={
             "Content-Disposition": f'attachment; filename="repopulse-{stamp}.csv"'})
@@ -222,13 +243,13 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
     @app.post("/api/auth/login")
     def login():
         ip = request.remote_addr or "?"
-        wait = svc.throttle.blocked_for(ip)
+        data = body()
+        # counted before the slow check, so parallel requests can't get past the limit
+        wait = svc.throttle.attempt(ip)
         if wait:
             return jsonify(error=f"Too many failed attempts. Try again in {wait} seconds."), 429
-        data = body()
         user = auth.verify(db, str(data.get("username", "")), str(data.get("password", "")))
         if user is None:
-            svc.throttle.fail(ip)
             return jsonify(error="Wrong username or password"), 401
         svc.throttle.reset(ip)
         token = auth.start_session(user, bool(data.get("remember")))
@@ -255,7 +276,8 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
         problem = auth.validate_new_password(username, password)
         if problem:
             return jsonify(error=problem), 400
-        auth.create_user(db, username, password)
+        if not auth.create_first_user(db, username, password):
+            return jsonify(error="An admin account already exists"), 409
         user = auth.verify(db, username, password)
         token = auth.start_session(user, True)
         return jsonify(user=username, csrf=token)
@@ -274,31 +296,48 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
         entries = data.get("repos") or [data.get("repo", "")]
         if isinstance(entries, str):
             entries = re.split(r"[\s,]+", entries)
+        if not isinstance(entries, list) or not all(isinstance(e, str) for e in entries):
+            return jsonify(error="repos must be a list of repository names"), 400
+
+        def tracked(owner: str, name: str) -> bool:
+            return db.query_one("SELECT 1 FROM repos WHERE lower(owner) = lower(?) AND "
+                                "lower(name) = lower(?)", (owner, name)) is not None
+
         client = svc.collector.client()
         added, errors = [], []
-        for entry in [e for e in entries if str(e).strip()][:100]:
+        for entry in [e for e in entries if e.strip()][:100]:
             try:
-                owner, name = parse_repo(str(entry))
-                if db.query_one("SELECT 1 FROM repos WHERE lower(owner) = lower(?) AND "
-                                "lower(name) = lower(?)", (owner, name)):
+                owner, name = parse_repo(entry)
+                if tracked(owner, name):
                     errors.append(f"{owner}/{name} is already tracked")
                     continue
                 info = client.repo(owner, name)
-                owner, name = info["full_name"].split("/", 1)
+                full = info.get("full_name") if isinstance(info, dict) else None
+                if not isinstance(full, str) or full.count("/") != 1:
+                    raise GitHubError("GitHub sent an unexpected answer")
+                owner, name = parse_repo(full)
+                # GitHub follows renames, so the canonical name can differ from what was typed
+                if tracked(owner, name):
+                    errors.append(f"{entry}: {owner}/{name} is already tracked")
+                    continue
                 order = db.query_one("SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM repos")["n"]
                 cur = db.execute(
                     "INSERT INTO repos(owner, name, description, html_url, sort_order, added_at, "
                     "asset_filter) VALUES(?,?,?,?,?,?,?)",
-                    (owner, name, info.get("description") or "", info.get("html_url"), order,
+                    (owner, name, str(info.get("description") or ""), info.get("html_url"), order,
                      now_iso(), str(data.get("asset_filter", "")).strip()[:200]))
                 added.append(cur.lastrowid)
+            except sqlite3.IntegrityError:
+                errors.append(f"{entry}: already tracked")
             except (ValueError, GitHubError) as exc:
                 errors.append(f"{entry}: {exc}")
+        queued = False
         if added and data.get("collect", True):
-            svc.collector.run("repo added", repo_ids=added, wait=False)
+            # while a collection runs, the new repositories are collected right after it
+            queued = svc.collector.run("repo added", repo_ids=added, wait=False, queue=True) is None
         rows = [db.query_one("SELECT * FROM repos WHERE id = ?", (i,)) for i in added]
         status = 200 if added or not errors else 400
-        return jsonify(added=[admin_repo(r) for r in rows if r], errors=errors), status
+        return jsonify(added=[admin_repo(r) for r in rows if r], errors=errors, queued=queued), status
 
     @app.post("/api/admin/discover")
     @auth.admin_required
@@ -349,7 +388,9 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
     @app.post("/api/admin/repos/order")
     @auth.admin_required
     def reorder():
-        ids = [int(i) for i in body().get("ids", []) if str(i).isdigit()]
+        ids = id_list(body().get("ids", []))
+        if ids is None:
+            return jsonify(error="ids must be a list of repository ids"), 400
         with db.transaction() as con:
             for pos, rid in enumerate(ids, start=1):
                 con.execute("UPDATE repos SET sort_order = ? WHERE id = ?", (pos, rid))
@@ -367,8 +408,10 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
     @auth.admin_required
     def collect_now():
         ids = body().get("repo_ids") or None
-        if ids:
-            ids = [int(i) for i in ids]
+        if ids is not None:
+            ids = id_list(ids)
+            if ids is None:
+                return jsonify(error="repo_ids must be a list of repository ids"), 400
         run_id = svc.collector.run("manual", repo_ids=ids, wait=False)
         if run_id is None:
             return jsonify(error="A collection is already running"), 409
@@ -470,26 +513,32 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
     @auth.admin_required
     def put_settings():
         data = body()
+        # everything is checked first, so a bad value saves nothing
+        changes: dict = {}
         if "site_title" in data:
-            db.set_setting("site_title", str(data["site_title"]).strip()[:80] or "RepoPulse")
+            changes["site_title"] = str(data["site_title"]).strip()[:80] or "RepoPulse"
         if "site_subtitle" in data:
-            db.set_setting("site_subtitle", str(data["site_subtitle"]).strip()[:200])
+            changes["site_subtitle"] = str(data["site_subtitle"]).strip()[:200]
         if "collection_time" in data:
             t = str(data["collection_time"]).strip()
             if not TIME_RE.match(t):
                 return jsonify(error="Collection time must be HH:MM (24 h)"), 400
             if t != db.get_setting("collection_time"):
-                db.set_setting("collection_time", t)
+                changes["collection_time"] = t
         if "public_dashboard" in data:
-            db.set_setting("public_dashboard", bool(data["public_dashboard"]))
+            changes["public_dashboard"] = bool(data["public_dashboard"])
         if "github_token" in data:
             token = str(data["github_token"] or "").strip()
             if token:
+                if not TOKEN_RE.match(token):
+                    return jsonify(error="That does not look like a GitHub token (letters, digits and "
+                                         "punctuation only, no spaces)"), 400
                 try:
                     GitHubClient(cfg.github_api_url, token, timeout=15).rate_limit()
                 except GitHubError as exc:
                     return jsonify(error=f"Token check failed: {exc}"), 400
-            db.set_setting("github_token", token)
+            changes["github_token"] = token
+        db.set_settings(changes)
         return get_settings()
 
     @app.put("/api/admin/appearance")
@@ -551,9 +600,14 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
     @auth.admin_required
     def change_password():
         data = body()
-        user = auth.verify(db, session["user"], str(data.get("current", "")))
+        ip = request.remote_addr or "?"
+        wait = svc.throttle.attempt(ip)  # the same limit as the login form
+        if wait:
+            return jsonify(error=f"Too many failed attempts. Try again in {wait} seconds."), 429
+        user = auth.verify(db, auth.current_user() or "", str(data.get("current", "")))
         if user is None:
             return jsonify(error="Current password is wrong"), 400
+        svc.throttle.reset(ip)
         problem = auth.validate_new_password(user["username"], str(data.get("new", "")))
         if problem:
             return jsonify(error=problem), 400

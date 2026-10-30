@@ -1,7 +1,7 @@
 // Entry point: loads site info, routes between the dashboard and admin pages.
 
 import { renderAdmin, renderLogin } from "./admin.js";
-import { api, session } from "./api.js";
+import { ApiError, api, session } from "./api.js";
 import { applyLook, setAppearance } from "./appearance.js";
 import { Dashboard } from "./dashboard.js";
 import { $, $$, markup, setHTML } from "./util.js";
@@ -15,6 +15,11 @@ function setSiteText(title, subtitle) {
   $("#site-subtitle").textContent = subtitle || "";
 }
 
+
+/** A path segment from the address bar; malformed %-escapes mean the page does not exist. */
+function decodeSlug(s) {
+  try { return decodeURIComponent(s); } catch { throw new ApiError("There is no such page.", 404); }
+}
 
 export function navigate(path, { replace = false } = {}) {
   if (replace) history.replaceState({}, "", path); else history.pushState({}, "", path);
@@ -39,7 +44,7 @@ async function route() {
       }
       const sub = path.slice("/admin/".length);
       if (sub.startsWith("repo/")) {
-        current = await renderAdmin(main, "", navigate, decodeURIComponent(sub.slice(5)));
+        current = await renderAdmin(main, "", navigate, decodeSlug(sub.slice(5)));
         return;
       }
       current = await renderAdmin(main, ["repos", "collection", "appearance", "settings"].includes(sub) ? sub : "", navigate);
@@ -50,7 +55,7 @@ async function route() {
         <p>The owner has turned off public access.</p><a class="btn primary" href="/admin" data-nav>Log in</a></div></div>`);
       return;
     }
-    const slug = path.startsWith("/repo/") ? decodeURIComponent(path.slice(6)) : null;
+    const slug = path.startsWith("/repo/") ? decodeSlug(path.slice(6)) : null;
     const dash = new Dashboard(main, { slug });
     current = dash;
     await dash.load();
@@ -79,7 +84,11 @@ document.addEventListener("click", (e) => {
 window.addEventListener("popstate", route);
 window.addEventListener("repopulse:navigate", (e) => { navigate(e.detail); main.focus({ preventScroll: true }); window.scrollTo({ top: 0 }); });
 window.addEventListener("repopulse:logged-out", () => route());
-window.addEventListener("repopulse:site", (e) => { site.title = e.detail.title; site.subtitle = e.detail.subtitle; setSiteText(site.title, site.subtitle); });
+window.addEventListener("repopulse:site", (e) => {
+  site.title = e.detail.title; site.subtitle = e.detail.subtitle;
+  if (typeof e.detail.public === "boolean") site.public = e.detail.public;
+  setSiteText(site.title, site.subtitle);
+});
 
 $("#theme-toggle").addEventListener("click", () => {
   const rootEl = document.documentElement;

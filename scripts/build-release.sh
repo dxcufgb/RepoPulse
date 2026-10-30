@@ -4,15 +4,18 @@
 #
 #   scripts/build-release.sh OUT_DIR VERSION        (VERSION like 1.2.3 or v1.2.3; 1.2.3-rc.1 for a pre-release)
 #
-#   repopulse-VERSION-linux.tar.gz   folder repopulse-VERSION/ (Linux, macOS, Raspberry Pi; ./install.sh)
-#   repopulse-VERSION-windows.zip    the same files (install.bat / install.ps1)
-#   repopulse-linux.tar.gz, repopulse-windows.zip   the same archives under fixed names, so
-#                                    .../releases/latest/download/<name> always points at the newest release
-#   SHA256SUMS.txt                   checksums of the four archives
+#   repopulse-VERSION-linux.tar.gz   folder repopulse-VERSION/ (Linux, Raspberry Pi; sudo ./install.sh)
+#   repopulse-linux.tar.gz           the same archive under a fixed name, so
+#                                    .../releases/latest/download/repopulse-linux.tar.gz always is the newest release
+#   SHA256SUMS.txt                   checksums of both
+#
+# The Windows installer (repopulse-VERSION-setup.exe, repopulse-setup.exe) is built on Windows by
+# packaging/windows/build-setup.ps1; release.yml adds it and writes SHA256SUMS.txt over all files.
 #
 # Only files tracked by git go in (no data/, config.json, .venv or caches), and not the repository tooling (.github,
-# tests, scripts). The output is reproducible: same commit and version, same bytes. Needs git, GNU tar, gzip, python3.
-# The file names are part of the release contract (README, release notes): do not rename them.
+# tests, scripts, packaging). The output is reproducible: same commit and version, same bytes. Needs git, GNU tar,
+# gzip, python3. The file names are part of the release contract (README, release notes, the updater, the one-line
+# installer of dxcufgb/install): do not rename them.
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then
@@ -21,7 +24,7 @@ if [[ $# -ne 2 ]]; then
 fi
 OUT="$1"
 VERSION="${2#v}"
-if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
   echo "version '$2' is not MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-PRERELEASE" >&2
   exit 1
 fi
@@ -34,8 +37,7 @@ trap 'rm -rf "$STAGE"' EXIT
 # The files of the release, as committed (a tracked file deleted in the working tree makes cp fail, on purpose).
 cd "$ROOT"
 mkdir -p "$STAGE/$NAME"
-git ls-files -z -- README.md LICENSE requirements.txt config.example.json \
-  install.sh install.ps1 install.bat run.sh run.bat auto-update.sh auto-update.ps1 repopulse \
+git ls-files -z -- README.md LICENSE requirements.txt config.example.json install.sh auto-update.sh repopulse \
   | while IFS= read -r -d '' f; do
       mkdir -p "$STAGE/$NAME/$(dirname "$f")"
       cp -p "$f" "$STAGE/$NAME/$f"
@@ -54,33 +56,17 @@ init.write_bytes(text.encode("utf-8"))
 index = root / "repopulse" / "static" / "index.html"
 index.write_bytes(re.sub(r"\?v=[0-9A-Za-z.-]+", f"?v={version}", index.read_text(encoding="utf-8")).encode("utf-8"))
 EOF
-chmod 755 "$STAGE/$NAME/install.sh" "$STAGE/$NAME/run.sh" "$STAGE/$NAME/auto-update.sh"
+chmod 755 "$STAGE/$NAME/install.sh" "$STAGE/$NAME/auto-update.sh"
 
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
-rm -f "$OUT/$NAME-linux.tar.gz" "$OUT/$NAME-windows.zip" "$OUT/repopulse-linux.tar.gz" "$OUT/repopulse-windows.zip" "$OUT/SHA256SUMS.txt"
+rm -f "$OUT/$NAME-linux.tar.gz" "$OUT/repopulse-linux.tar.gz" "$OUT/SHA256SUMS.txt"
 
 # Fixed timestamps, owners and order, so the archives do not depend on when or where they were built.
 EPOCH="$(git log -1 --format=%ct HEAD 2>/dev/null || echo 315532800)"
 (cd "$STAGE" && tar --sort=name --mtime="@$EPOCH" --owner=0 --group=0 --numeric-owner --format=gnu -cf - "$NAME" | gzip -n -9 > "$OUT/$NAME-linux.tar.gz")
-python3 - "$STAGE" "$NAME" "$OUT/$NAME-windows.zip" "$EPOCH" <<'EOF'
-import os, sys, time, zipfile
-stage, name, out, epoch = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
-stamp = time.gmtime(max(epoch, 315532800))[:6]  # zip cannot store dates before 1980
-files = []
-for folder, dirs, names in os.walk(os.path.join(stage, name)):
-    files += [os.path.join(folder, n) for n in names]
-with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
-    for path in sorted(files, key=lambda p: os.path.relpath(p, stage).replace(os.sep, "/")):
-        info = zipfile.ZipInfo(os.path.relpath(path, stage).replace(os.sep, "/"), stamp)
-        info.compress_type = zipfile.ZIP_DEFLATED
-        info.external_attr = (0o755 if os.access(path, os.X_OK) else 0o644) << 16
-        with open(path, "rb") as fh:
-            zf.writestr(info, fh.read())
-EOF
 
 cp "$OUT/$NAME-linux.tar.gz" "$OUT/repopulse-linux.tar.gz"
-cp "$OUT/$NAME-windows.zip" "$OUT/repopulse-windows.zip"
-(cd "$OUT" && sha256sum "$NAME-linux.tar.gz" "$NAME-windows.zip" repopulse-linux.tar.gz repopulse-windows.zip > SHA256SUMS.txt)
+(cd "$OUT" && sha256sum "$NAME-linux.tar.gz" repopulse-linux.tar.gz > SHA256SUMS.txt)
 echo "Built in $OUT:"
 cat "$OUT/SHA256SUMS.txt"

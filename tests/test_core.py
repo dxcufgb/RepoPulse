@@ -184,11 +184,11 @@ class Client(unittest.TestCase):
             def read(self):
                 return b'{"resources": {"core": {"limit": 5000}}}'
 
-        def fake_urlopen(req, timeout):
+        def fake_open(req, api_url, timeout):
             seen["url"], seen["auth"], seen["timeout"] = req.full_url, req.get_header("Authorization"), timeout
             return Resp()
 
-        with mock.patch("urllib.request.urlopen", fake_urlopen):
+        with mock.patch("repopulse.github._open", fake_open):
             core = GitHubClient("https://api.github.com/", " secret-token ", timeout=7).rate_limit()
         self.assertEqual(core, {"limit": 5000})
         self.assertEqual(seen["url"], "https://api.github.com/rate_limit")

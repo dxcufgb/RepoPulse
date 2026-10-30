@@ -22,6 +22,19 @@ export function markup(strings, ...values) {
 }
 export const raw = (s) => ({ __raw: String(s ?? "") });
 
+/** map[key] only when it is the map's own entry: keys from stored layouts such
+ * as "constructor" or "__proto__" never reach Object.prototype. */
+export const own = (map, key) => (map && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined);
+
+/** An http(s) URL for an href, else "" (javascript:, data: and the like are dropped). */
+export function safeUrl(u) {
+  if (typeof u !== "string" || !u) return "";
+  try {
+    const url = new URL(u, location.href);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : "";
+  } catch { return ""; }
+}
+
 export function setHTML(el, tpl) {
   // nosemgrep: javascript.browser.security.insecure-document-method, javascript.browser.security.insecure-innerhtml -- only markup`` output (every value escaped) or esc() text
   el.innerHTML = tpl && tpl.__raw !== undefined ? tpl.__raw : esc(tpl);

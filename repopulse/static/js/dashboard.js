@@ -4,7 +4,7 @@ import { ApiError, api } from "./api.js";
 import { Model } from "./data.js";
 import { $, $$, confirmDialog, frag, markup, icon, setHTML, store, toast, trapFocus, uid } from "./util.js";
 import { appearance } from "./appearance.js";
-import { SHARED_KEYS, TYPES, defaultLayout, defaultRepoLayout, renderWidget, repoHref, titleOf, typesFor } from "./widgets.js";
+import { SHARED_KEYS, TYPES, defaultLayout, defaultRepoLayout, renderWidget, repoHref, titleOf, typeOf, typesFor } from "./widgets.js";
 
 const RANGES = [[7, "7 days"], [30, "30 days"], [90, "90 days"], [365, "12 months"], [0, "All time"]];
 
@@ -42,7 +42,7 @@ export class Dashboard {
       this.pageData = await api(`/api/repos/${this.repo.id}/page`);
       this.source = ok(this.pageData.layout) ? "own" : ok(this.pageData.shared_layout) ? "shared" : "starter";
       this.saved = this.source === "own" ? this.pageData.layout : this.source === "shared" ? this.pageData.shared_layout : defaultRepoLayout();
-      document.title = `${this.repo.label}, ${document.title.replace(/^.*?, /, "")}`;
+      document.title = `${this.repo.label}, ${$("#site-title")?.textContent || "RepoPulse"}`;
     } else {
       this.saved = ok(data.layout) ? data.layout : defaultLayout(this.model);
     }
@@ -51,7 +51,7 @@ export class Dashboard {
 
   ctx(extra = {}) {
     return {
-      model: this.model, globalDays: this.globalDays, charts: this.charts, base: this.base,
+      model: this.model, globalDays: this.globalDays, charts: this.charts, base: this.base, editable: this.editable,
       repo: this.repo || null, pageData: this.pageData || null, pageCache: (this.pageCache ||= new Map()),
       links: !this.editing, ...extra,
     };
@@ -216,7 +216,7 @@ export class Dashboard {
       <button type="button" class="icon-btn" data-t="del" title="Remove widget" aria-label="Remove widget">${icon("trash")}</button>
     </div>`);
     slot.appendChild(bar);
-    slot.appendChild(frag(markup`<span class="edit-label">${TYPES[cfg.type]?.label || cfg.type}</span>`));
+    slot.appendChild(frag(markup`<span class="edit-label">${typeOf(cfg.type)?.label || String(cfg.type ?? "")}</span>`));
     const move = (to) => {
       const [w] = this.layout.widgets.splice(i, 1);
       this.layout.widgets.splice(to, 0, w);
@@ -261,9 +261,9 @@ function openEditor(existing, dash) {
     let cfg = existing ? structuredClone(existing) : { id: uid(), type: "timeline", ...structuredClone(TYPES.timeline.defaults) };
     const previewCharts = [];
     const prevFocus = document.activeElement;
-    const scrim = frag(markup`<div class="scrim" role="presentation"><div class="drawer" role="dialog" aria-modal="true" aria-labelledby="ed-title">
+    const scrim = frag(markup`<div class="scrim" role="presentation"><div class="drawer" role="dialog" aria-modal="true" aria-labelledby="ed-heading">
       <form class="drawer-form" novalidate>
-        <header><h2 id="ed-title">${existing ? "Edit widget" : "Add a widget"}</h2>
+        <header><h2 id="ed-heading">${existing ? "Edit widget" : "Add a widget"}</h2>
           <button type="button" class="icon-btn" data-close aria-label="Close">${icon("close")}</button></header>
         <div class="drawer-fields"></div>
         <footer><button type="button" class="btn ghost" data-close>Cancel</button>
@@ -285,11 +285,13 @@ function openEditor(existing, dash) {
     const preview = () => {
       previewCharts.forEach((c) => c.destroy()); previewCharts.length = 0;
       const box = $("#ed-preview", scrim);
-      box.replaceChildren(renderWidget({ ...cfg, size: ["quarter", "third"].includes(cfg.size) ? "half" : "full" }, dash.ctx({ charts: previewCharts, links: false, tools: null })));
+      // its own id, so the preview's ids (t-<id>) never repeat the widget's on the page
+      box.replaceChildren(renderWidget({ ...cfg, id: `preview-${cfg.id}`, size: ["quarter", "third"].includes(cfg.size) ? "half" : "full" }, dash.ctx({ charts: previewCharts, links: false, tools: null })));
     };
 
     const drawFields = () => {
-      const type = TYPES[cfg.type];
+      // an unknown type (from a newer or damaged layout) shows only the type picker
+      const type = typeOf(cfg.type) || { fields: [], sizes: [], autoTitle: () => "" };
       const repos = dash.model.repos;
       const where = dash.repo ? "repo" : "overview";
       const parts = [];
@@ -323,8 +325,8 @@ function openEditor(existing, dash) {
       $$("[data-type]", fields).forEach((b) => b.addEventListener("click", () => {
         if (b.dataset.type === cfg.type) return;
         const keep = Object.fromEntries(SHARED_KEYS.filter((k) => cfg[k] !== undefined).map((k) => [k, cfg[k]]));
-        cfg = { ...structuredClone(TYPES[b.dataset.type].defaults), ...keep, type: b.dataset.type };
-        if (!TYPES[cfg.type].fields.some((x) => x.key === "repos")) delete cfg.repos;
+        cfg = { ...structuredClone(typeOf(b.dataset.type).defaults), ...keep, type: b.dataset.type };
+        if (!typeOf(cfg.type).fields.some((x) => x.key === "repos")) delete cfg.repos;
         if (["releases", "releasetime", "files"].includes(cfg.type) && !cfg.repo && repos[0] && !dash.repo) cfg.repo = repos[0].id;
         drawFields(); preview();
         $(`[data-type="${cfg.type}"]`, fields).focus();
@@ -334,9 +336,10 @@ function openEditor(existing, dash) {
         let val = el.type === "checkbox" ? el.checked : el.value;
         if (["range", "limit", "repo", "rows", "avg"].includes(k) && val !== "global" && val !== "") val = Number(val);
         cfg[k] = val;
-        const fd = TYPES[cfg.type].fields.find((x) => x.key === k);
+        const fields0 = typeOf(cfg.type)?.fields || [];
+        const fd = fields0.find((x) => x.key === k);
         // other options may appear or disappear with this choice
-        const needsRedraw = TYPES[cfg.type].fields.some((x) => x.show);
+        const needsRedraw = fields0.some((x) => x.show);
         if (needsRedraw && fd && (fd.type === "select" || fd.type === "check")) { drawFields(); $(`[data-k="${k}"]`, fields)?.focus(); }
         clearTimeout(drawFields.t); drawFields.t = setTimeout(preview, el.type === "text" || el.tagName === "TEXTAREA" ? 250 : 0);
       }));
@@ -353,7 +356,7 @@ function openEditor(existing, dash) {
     if (cfg.type === "releases" && !cfg.repo && dash.model.repos[0]) cfg.repo = dash.model.repos[0].id;
     document.body.appendChild(scrim);
     drawFields(); preview();
-    ($("[aria-pressed='true']", fields) || $("input, select", fields)).focus();
+    ($("[aria-pressed='true']", fields) || $("input, select, button", fields))?.focus();
   });
 }
 

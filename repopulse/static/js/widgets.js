@@ -3,7 +3,7 @@
 
 import { api } from "./api.js";
 import { bucket, pctChange, rangeLabel } from "./data.js";
-import { esc, fmt, fmt1, fmtCompact, fmtDay, markup, icon, parseDate, raw, setHTML, timeAgo } from "./util.js";
+import { fmt, fmt1, fmtCompact, fmtDay, markup, icon, own, parseDate, raw, safeUrl, setHTML, timeAgo } from "./util.js";
 
 /* ------------------------------------------------------------- theme */
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -96,6 +96,14 @@ function targetRepo(cfg, ctx) {
 export function repoHref(ctx, repo) {
   return `${ctx.base || ""}/repo/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`;
 }
+/** Without a repository (none chosen, removed, or hidden from visitors) only the admin gets a hint. */
+const noRepoText = (ctx) => (ctx.editable ? "Choose a repository in this widget's settings." : "Nothing to show here.");
+/** A link to GitHub in a new tab; only http(s) URLs become links, else just the content. */
+function extLink(url, content, attrs = raw("")) {
+  const href = safeUrl(url);
+  return href ? markup`<a href="${href}" target="_blank" rel="noopener" ${attrs}>${content}</a>` : markup`${content}`;
+}
+const releasesUrl = (repo) => { const u = safeUrl(repo.url); return u ? u + "/releases" : ""; };
 function openRepo(ctx, repo) {
   if (repo && ctx.links) window.dispatchEvent(new CustomEvent("repopulse:navigate", { detail: repoHref(ctx, repo) }));
 }
@@ -216,7 +224,7 @@ const HEIGHTS = { s: 200, m: 280, l: 380, xl: 480 };
 /** The legend (placed after cfg.legend) and the box the canvas goes in. */
 function chartFrame(cfg, ctx, legendItems, { height, round = false, label = "" } = {}) {
   const pos = cfg.legend || "auto";
-  const h = HEIGHTS[cfg.height] || height;
+  const h = own(HEIGHTS, cfg.height) || height;
   return markup`<div class="chart-wrap legend-${pos}">${pos === "none" ? "" : legendHTML(legendItems, ctx)}
     <div class="chart-box ${round ? "round" : ""}" style="${h ? `height:${h}px` : ""}"><canvas role="img" aria-label="${label}"></canvas></div></div>`;
 }
@@ -346,8 +354,8 @@ export const TYPES = {
       { key: "align", type: "select", label: "Alignment", options: [["left", "Left"], ["center", "Centred"]] },
       f.compact, f.card,
     ],
-    autoTitle: (c) => ({ total: "Total downloads", new: "New downloads", avg: "Downloads per day", stars: "Stars",
-      forks: "Forks", top: "Most downloaded", repos: "Repositories", releases: "Releases", latest: "Newest release" })[c.metric] || "Number",
+    autoTitle: (c) => own({ total: "Total downloads", new: "New downloads", avg: "Downloads per day", stars: "Stars",
+      forks: "Forks", top: "Most downloaded", repos: "Repositories", releases: "Releases", latest: "Newest release" }, c.metric) || "Number",
     render: renderKpi,
   },
   timeline: {
@@ -365,7 +373,7 @@ export const TYPES = {
       ...timeLook((c) => c.split !== "combined"),
       { ...colorsField("Repository colours"), show: (c) => c.split !== "combined", overviewOnly: true },
     ],
-    autoTitle: (c) => ({ cumulative: "Total downloads over time", new: "New downloads", stars: "Stars over time" })[c.measure],
+    autoTitle: (c) => own({ cumulative: "Total downloads over time", new: "New downloads", stars: "Stars over time" }, c.measure),
     render: renderTimeline,
   },
   breakdown: {
@@ -389,7 +397,7 @@ export const TYPES = {
       colorsField("Repository colours"),
       f.card,
     ],
-    autoTitle: (c) => ({ total: "Downloads per repository", new: "New downloads per repository", stars: "Stars per repository", forks: "Forks per repository" })[c.measure],
+    autoTitle: (c) => own({ total: "Downloads per repository", new: "New downloads per repository", stars: "Stars per repository", forks: "Forks per repository" }, c.measure),
     render: renderBreakdown,
   },
   releases: {
@@ -504,8 +512,12 @@ export const TYPES = {
 export const SHARED_KEYS = ["id", "title", "repos", "range", "card", "height", "legend", "grid", "scale", "values", "colors", "top", "rest", "compact", "curve", "points", "avg", "total"];
 
 
+/** The widget type of a stored layout entry, or null for an unknown one. */
+export const typeOf = (name) => own(TYPES, name) || null;
+
 export function titleOf(cfg, ctx) {
-  return (cfg.title || "").trim() || TYPES[cfg.type].autoTitle(cfg, ctx) || "";
+  const type = typeOf(cfg.type);
+  return String(cfg.title || "").trim() || (type ? type.autoTitle(cfg, ctx) : "Unknown widget") || "";
 }
 
 export function subtitleOf(cfg, ctx) {
@@ -516,7 +528,7 @@ export function subtitleOf(cfg, ctx) {
   }
   if (!ctx.repo && cfg.repos && cfg.repos.length && t !== "releases") {
     const names = ctx.model.pick(cfg.repos).map((r) => r.label);
-    parts.push(names.length <= 2 ? names.join(" and ") : `${names.length} repositories`);
+    if (names.length) parts.push(names.length <= 2 ? names.join(" and ") : `${names.length} repositories`);
   }
   const top = Number(cfg.top);
   if (cfg.rest === "hide" && top > 0 && ["timeline", "breakdown", "releasetime", "files"].includes(t) && !(t === "timeline" && cfg.split === "combined")) parts.push(`top ${top}`);
@@ -561,10 +573,15 @@ const CARDS = ["accent", "tint", "plain", "clear"];
 
 /** Renders one widget into a new element. ctx: {model, globalDays, charts, mode, tools} */
 export function renderWidget(cfg, ctx) {
-  const type = TYPES[cfg.type];
+  const type = typeOf(cfg.type);
   const slot = document.createElement("div");
   slot.dataset.id = cfg.id;
-  if (!type) { slot.className = "slot w-full"; slot.textContent = "Unknown widget"; if (ctx.tools) ctx.tools(slot, cfg); return slot; }
+  if (!type) {
+    slot.className = "slot w-quarter";
+    setHTML(slot, markup`<div class="slot-content"><section class="widget"><p class="empty">Unknown widget</p></section></div>`);
+    if (ctx.tools) ctx.tools(slot, cfg);
+    return slot;
+  }
   slot.className = `slot w-${type.sizes.length === 1 ? type.sizes[0][0] : cfg.size || type.defaults.size}`;
   if (CARDS.includes(cfg.card)) slot.classList.add(`card-${cfg.card}`);
   // Widgets draw into their own box, so ones that finish loading later never
@@ -621,7 +638,7 @@ function pulseData(cfg, model, repos, days, win) {
   const by = cfg.bucket && cfg.bucket !== "auto" ? cfg.bucket : autoBucket(days, win.dates.length);
   const cum = cfg.pulse === "cumulative";
   const series = bucket(win.dates, model.sum(repos, cum ? "cum" : "daily", win), by, cum ? "last" : "sum");
-  const unit = { day: "day", week: "week", month: "month" }[by];
+  const unit = own({ day: "day", week: "week", month: "month" }, by);
   return { by, cum, series, unit, word: cum ? "total downloads" : "new downloads",
     foot: cum ? `Total downloads by ${unit}` : `New downloads per ${unit}` };
 }
@@ -902,7 +919,7 @@ function drawItems(body, cfg, ctx, items, { unit, total, label, legendItems, bar
   }
   if (ARC_STYLES.includes(style)) {
     const pos = cfg.legend === "right" || cfg.legend === "none" ? cfg.legend : "bottom";
-    const h = HEIGHTS[cfg.height];
+    const h = own(HEIGHTS, cfg.height);
     setHTML(body, markup`<div class="chart-wrap arc legend-${pos}"><div class="chart-box round" style="${h ? `height:${h}px` : ""}"><canvas role="img" aria-label="${label}"></canvas>
       ${style === "doughnut" ? markup`<div class="ring-centre"><div><div class="kpi-value num">${fmtCompact(total)}</div><div class="muted">${unit}</div></div></div>` : ""}</div>
       ${pos === "none" ? "" : markup`<div class="legend legend-list">${items.map((it) => markup`<span>
@@ -966,11 +983,11 @@ function renderBreakdown(slot, cfg, ctx) {
   const colors = colorsFor(repos, pal);
   const all = repos.map((r, i) => ({ label: r.label, value: val(r) || 0, color: colors.get(r.id), repo: r, pos: i }));
   const { shown, rest } = foldItems(all, (x) => x.value, cfg);
-  const items = shown.slice().sort(SORTS[cfg.sort] || SORTS.value);
+  const items = shown.slice().sort(own(SORTS, cfg.sort) || SORTS.value);
   if (rest.length) items.push({ label: `Other (${rest.length})`, value: rest.reduce((s, x) => s + x.value, 0), color: pal.other, other: true });
   applyColors(cfg, items, pal);
   const total = items.reduce((s, x) => s + x.value, 0);
-  const unit = { total: "downloads", new: "new downloads", stars: "stars", forks: "forks" }[cfg.measure] || "downloads";
+  const unit = own({ total: "downloads", new: "new downloads", stars: "stars", forks: "forks" }, cfg.measure) || "downloads";
   const label = titleOf(cfg, ctx);
   const draw = (body) => {
     if (!repos.length || total === 0) return noData(body, repos.length ? `No ${unit} yet.` : "No repositories yet.");
@@ -989,14 +1006,14 @@ function loadReleases(ctx, repoId) {
 function renderReleases(slot, cfg, ctx) {
   const repo = targetRepo(cfg, ctx);
   const pal = palette();
-  if (!repo) { noData(shell(slot, cfg, ctx), "Choose a repository in this widget's settings."); return; }
+  if (!repo) { noData(shell(slot, cfg, ctx), noRepoText(ctx)); return; }
   const color = colorsFor([repo], pal).get(repo.id);
   const unit = cfg.measure === "last_7_days" ? "downloads in the last 7 days" : "downloads";
   const asTable = cfg.style === "table";
   const value = (r) => (cfg.measure === "last_7_days" ? r.last_7_days ?? 0 : r.downloads);
   let rows = [];
   const tableCols = ["Release", "Published", "Downloads", "Last 7 days"];
-  const tableRows = () => rows.map((r) => [markup`<a href="${r.url || repo.url + "/releases"}" target="_blank" rel="noopener">${r.tag}</a>${r.name && r.name !== r.tag ? markup` <span class="muted">${r.name}</span>` : ""}${r.prerelease ? markup` <span class="tag">pre-release</span>` : ""}`,
+  const tableRows = () => rows.map((r) => [markup`${extLink(safeUrl(r.url) || releasesUrl(repo), r.tag)}${r.name && r.name !== r.tag ? markup` <span class="muted">${r.name}</span>` : ""}${r.prerelease ? markup` <span class="tag">pre-release</span>` : ""}`,
     r.published_at ? new Date(r.published_at).toLocaleDateString() : "–", r.downloads, r.last_7_days]);
   const draw = (body) => {
     setHTML(body, markup`<p class="empty"><span class="spinner"></span></p>`);
@@ -1049,15 +1066,15 @@ function renderTable(slot, cfg, ctx) {
   ].filter(([k]) => k === "label" || !visible || visible.includes(k));
   const plus = (v) => (v == null ? "–" : "+" + fmt(v));
   const cell = {
-    label: (x) => markup`<td><div class="repo-cell"><span class="dot" style="background:${colors.get(x.r.id)}"></span><div><a href="${ctx.links ? repoHref(ctx, x.r) : x.r.url}" ${ctx.links ? "" : raw('target="_blank" rel="noopener"')}>${x.r.label}</a><small>${x.r.full_name} <a class="ext" href="${x.r.url}" target="_blank" rel="noopener" aria-label="${x.r.full_name} on GitHub" title="Open on GitHub">${icon("external")}</a></small></div></div></td>`,
+    label: (x) => markup`<td><div class="repo-cell"><span class="dot" style="background:${colors.get(x.r.id)}"></span><div>${ctx.links ? markup`<a href="${repoHref(ctx, x.r)}">${x.r.label}</a>` : extLink(x.r.url, x.r.label)}<small>${x.r.full_name} ${safeUrl(x.r.url) ? extLink(x.r.url, icon("external"), markup`class="ext" aria-label="${x.r.full_name} on GitHub" title="Open on GitHub"`) : ""}</small></div></div></td>`,
     total: (x) => markup`<td class="r">${fmt(x.total)}</td>`,
     gained: (x) => markup`<td class="r">${plus(x.gained)}</td>`,
     week: (x) => markup`<td class="r">${plus(x.week)}</td>`,
     stars: (x) => markup`<td class="r">${fmt(x.stars)}</td>`,
     forks: (x) => markup`<td class="r">${fmt(x.forks)}</td>`,
-    rel: (x) => markup`<td>${x.rel ? markup`<a href="${x.rel.html_url || x.r.url + "/releases"}" target="_blank" rel="noopener">${x.rel.tag}</a> <span class="muted">${x.rel.published_at ? timeAgo(x.rel.published_at) : ""}</span>` : markup`<span class="muted">none</span>`}</td>`,
+    rel: (x) => markup`<td>${x.rel ? markup`${extLink(safeUrl(x.rel.html_url) || releasesUrl(x.r), x.rel.tag)} <span class="muted">${x.rel.published_at ? timeAgo(x.rel.published_at) : ""}</span>` : markup`<span class="muted">none</span>`}</td>`,
   };
-  let sortKey = cell[cfg.sortBy] ? cfg.sortBy : "total", dir = sortKey === "label" ? 1 : -1;
+  let sortKey = own(cell, cfg.sortBy) ? cfg.sortBy : "total", dir = sortKey === "label" ? 1 : -1;
   const limit = Number(cfg.rows) || 0;
   const draw = () => {
     let sorted = data.slice().sort((a, b) => {
@@ -1082,11 +1099,17 @@ const NOTE_CLASSES = { large: " note-large", small: " note-small" };
 function renderNote(slot, cfg, ctx) {
   const body = shell(slot, cfg, ctx);
   // only fixed class names from NOTE_CLASSES, never the stored value itself
-  const cls = "note-text" + (NOTE_CLASSES[cfg.textSize] || "") + (cfg.align === "center" ? " center" : "");
-  // nosemgrep: javascript.lang.security.html-in-template-string -- u is part of the esc()-escaped text and cannot contain " or <
-  const text = esc(cfg.text || "").replace(/https:\/\/[^\s<]+[^\s<.,;:!?)]/g, (u) => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
-  // nosemgrep: javascript.lang.security.html-in-template-string -- text is esc()-escaped; links are https URLs without quotes or <; cls is built from fixed strings
-  setHTML(body, text ? raw(`<div class="${cls}">${text}</div>`) : markup`<p class="empty">Write something in this widget's settings.</p>`);
+  const cls = "note-text" + (own(NOTE_CLASSES, cfg.textSize) || "") + (cfg.align === "center" ? " center" : "");
+  // URLs are found in the raw text; every piece (text and link) is escaped on its own
+  const src = String(cfg.text || "");
+  const parts = [];
+  let at = 0;
+  for (const m of src.matchAll(/https:\/\/[^\s<>"']+[^\s<>"'.,;:!?)]/g)) {
+    parts.push(src.slice(at, m.index), markup`<a href="${m[0]}" target="_blank" rel="noopener">${m[0]}</a>`);
+    at = m.index + m[0].length;
+  }
+  parts.push(src.slice(at));
+  setHTML(body, src ? markup`<div class="${cls}">${parts}</div>` : markup`<p class="empty">Write something in this widget's settings.</p>`);
 }
 
 /* repository header ------------------------------------------------------ */
@@ -1109,7 +1132,7 @@ function renderRepoHead(slot, cfg, ctx) {
   setHTML(slot, markup`<section class="pulse repo-head ${noChart ? "no-chart" : ""}" aria-labelledby="t-${cfg.id}">
     <div class="pulse-figures">
       <div class="repo-name"><span class="dot" style="background:${color}" aria-hidden="true"></span><h1 id="t-${cfg.id}">${repo.label}</h1></div>
-      <div class="repo-sub"><a href="${repo.url}" target="_blank" rel="noopener">${repo.full_name} ${icon("external")}</a>${repo.hidden ? markup` <span class="tag">hidden from visitors</span>` : ""}</div>
+      <div class="repo-sub">${extLink(repo.url, markup`${repo.full_name} ${safeUrl(repo.url) ? icon("external") : ""}`)}${repo.hidden ? markup` <span class="tag">hidden from visitors</span>` : ""}</div>
       ${repo.description ? markup`<p class="repo-desc">${repo.description}</p>` : ""}
       <div class="pulse-total">${(cfg.compact ? fmtCompact : fmt)(repo.total)}</div>
       ${deltaLine(days, gained, pct, "downloads, ")}
@@ -1117,7 +1140,7 @@ function renderRepoHead(slot, cfg, ctx) {
         <div><dt>Stars</dt><dd>${fmt(repo.stars)}</dd></div>
         <div><dt>Forks</dt><dd>${fmt(repo.forks)}</dd></div>
         <div><dt>Releases</dt><dd>${fmt(repo.releases)}</dd></div>
-        <div><dt>Newest</dt><dd>${rel ? markup`<a href="${rel.html_url || repo.url + "/releases"}" target="_blank" rel="noopener">${rel.tag}</a>` : "none"}</dd></div>
+        <div><dt>Newest</dt><dd>${rel ? extLink(safeUrl(rel.html_url) || releasesUrl(repo), rel.tag) : "none"}</dd></div>
         <div><dt>Tracked since</dt><dd>${repo.trackedSince ? fmtDay(repo.trackedSince, { day: "numeric", month: "short", year: "numeric" }) : "not yet"}</dd></div>
       </dl>`}
     </div>
@@ -1140,7 +1163,7 @@ function loading(slot, cfg, ctx) {
 function renderReleaseTime(slot, cfg, ctx) {
   const { model } = ctx;
   const repo = targetRepo(cfg, ctx);
-  if (!repo) { noData(shell(slot, cfg, ctx), "Choose a repository in this widget's settings."); return; }
+  if (!repo) { noData(shell(slot, cfg, ctx), noRepoText(ctx)); return; }
   loading(slot, cfg, ctx);
   loadPage(ctx, repo.id).then((d) => {
     if (!slot.isConnected) return;
@@ -1178,7 +1201,7 @@ function renderReleaseTime(slot, cfg, ctx) {
 /* files ------------------------------------------------------------------ */
 function renderFiles(slot, cfg, ctx) {
   const repo = targetRepo(cfg, ctx);
-  if (!repo) { noData(shell(slot, cfg, ctx), "Choose a repository in this widget's settings."); return; }
+  if (!repo) { noData(shell(slot, cfg, ctx), noRepoText(ctx)); return; }
   loading(slot, cfg, ctx);
   loadPage(ctx, repo.id).then((d) => {
     if (!slot.isConnected) return;

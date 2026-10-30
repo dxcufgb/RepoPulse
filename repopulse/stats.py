@@ -6,21 +6,14 @@ import fnmatch
 import io
 from datetime import date as Date, timedelta
 
-from .db import Database, glob_clause
+from .db import Database, glob_clause, split_filter
 
 SLOTS = 8  # the frontend owns the validated palette (light and dark steps)
 
 
 def asset_counted(name: str, asset_filter: str) -> bool:
-    includes, excludes = [], []
-    for part in (asset_filter or "").replace(";", ",").split(","):
-        part = part.strip()
-        if part.startswith("!"):
-            # a lone "!" is ignored, as in db.glob_clause, so the totals and the file list agree
-            if part[1:].strip():
-                excludes.append(part[1:].strip().lower())
-        elif part:
-            includes.append(part.lower())
+    # the same parsing as db.glob_clause, so the totals and the file list agree
+    includes, excludes = split_filter(asset_filter)
     low = name.lower()
     if includes and not any(fnmatch.fnmatchcase(low, p) for p in includes):
         return False

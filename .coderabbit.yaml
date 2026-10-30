@@ -18,7 +18,9 @@ reviews:
       instructions: |
         PBKDF2 password hashes; sessions carry the password fingerprint (pv), so changing a password ends every other
         session. Login throttle after 5 failures. First-run setup only from the server itself (is_local_request)
-        unless allow_remote_setup; forwarded headers count only with behind_proxy (ProxyFix). Flag any loosening.
+        unless allow_remote_setup (loopback peer and Host, no proxy headers); forwarded headers count only with
+        behind_proxy and only from loopback or trusted_proxies (TrustedProxyFix). Session checks go through
+        logged_in_user() (pv). Flag any loosening.
     - path: "repopulse/{db,stats}.py"
       instructions: |
         SQL uses ? parameters. The few formatted statements use fixed column names only, annotated for Semgrep; flag

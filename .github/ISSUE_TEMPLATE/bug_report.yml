@@ -28,7 +28,7 @@ body:
     id: install
     attributes:
       label: How it runs
-      options: [install.sh --service (systemd), ./run.sh, install.ps1 -Service (Task Scheduler), run.bat, Other]
+      options: [Linux (install.sh, systemd), Windows (repopulse-setup.exe), Run from a folder (python -m repopulse serve), Other]
   - type: input
     id: python
     attributes:
@@ -44,6 +44,6 @@ body:
     attributes:
       label: Log output
       description: >-
-        `journalctl -u repopulse -n 50` (Linux service), the console of `run.sh` / `run.bat`, or the collection log in the
+        `journalctl -u repopulse -n 50` (Linux), `C:\ProgramData\RepoPulse\install.log` (Windows), the console of `python -m repopulse serve`, or the collection log in the
         admin area. Remove your GitHub token before pasting.
       render: text

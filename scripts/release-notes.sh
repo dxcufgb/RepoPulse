@@ -13,7 +13,7 @@ if [[ $# -ne 2 ]]; then
 fi
 VERSION="$1"
 REPO="$2"
-if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
   echo "version '$VERSION' is not MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-PRERELEASE" >&2
   exit 1
 fi
@@ -31,12 +31,18 @@ LATEST="$BASE/latest/download"
 cat <<EOF
 ## Downloads
 
-| OS | File | This release | Always the latest |
+| System | File | This release | Always the latest |
 | --- | --- | --- | --- |
-| Windows 10/11 (Python 3.9+ must be installed) | Archive with \`install.bat\` | [$NAME-windows.zip]($DL/$NAME-windows.zip) | [repopulse-windows.zip]($LATEST/repopulse-windows.zip) |
-| Linux / Raspberry Pi / macOS (Python 3.9+) | Archive with \`install.sh\` | [$NAME-linux.tar.gz]($DL/$NAME-linux.tar.gz) | [repopulse-linux.tar.gz]($LATEST/repopulse-linux.tar.gz) |
+| Windows 10/11 (64-bit) | Installer (includes Python) | [$NAME-setup.exe]($DL/$NAME-setup.exe) | [repopulse-setup.exe]($LATEST/repopulse-setup.exe) |
+| Linux / Raspberry Pi (systemd, Python 3.9+) | Archive with \`install.sh\` | [$NAME-linux.tar.gz]($DL/$NAME-linux.tar.gz) | [repopulse-linux.tar.gz]($LATEST/repopulse-linux.tar.gz) |
 
 Checksums of all files: [SHA256SUMS.txt]($DL/SHA256SUMS.txt).
+
+### Windows
+
+Run \`$NAME-setup.exe\` (it asks for administrator rights). It installs RepoPulse in \`C:\\Program Files\\RepoPulse\`
+with its own Python, keeps the settings and data in \`C:\\ProgramData\\RepoPulse\`, and starts it with Windows. Running a
+newer installer updates it and keeps the settings and data.
 
 ### Linux / Raspberry Pi
 
@@ -45,13 +51,10 @@ curl -fL -O $DL/$NAME-linux.tar.gz -O $DL/SHA256SUMS.txt
 sha256sum --check --ignore-missing SHA256SUMS.txt
 tar xzf $NAME-linux.tar.gz
 cd $NAME
-./install.sh              # add --service to start it at boot
+sudo ./install.sh          # installs the repopulse service: /opt/repopulse, /etc/repopulse, /var/lib/repopulse
 \`\`\`
 
-### Windows
-
-Unzip \`$NAME-windows.zip\` somewhere permanent and double-click \`install.bat\`, then \`run.bat\`.
-\`.\\install.ps1 -Service\` (PowerShell as administrator) starts it with Windows.
-
-**Updating:** stop RepoPulse, replace the program files but keep \`data/\` and \`config.json\`, run the installer again.
+Upgrading: run the new release's \`sudo ./install.sh\` (or \`sudo /opt/repopulse/install.sh --update-now\` with
+automatic updates on); the settings and data are kept. **Coming from a RepoPulse you started from an unpacked folder?**
+Both installers find it, copy its database, settings and admin account, and leave the old folder alone.
 EOF

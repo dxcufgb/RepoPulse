@@ -280,9 +280,10 @@ def latest_release(gh: GitHub) -> Optional[Release]:
 
 
 def asset_name(version: str, platform: str) -> str:
-    """The archive to download (scripts/build-release.sh): repopulse-X.Y.Z-linux.tar.gz / -windows.zip."""
+    """The file to download: repopulse-X.Y.Z-linux.tar.gz (scripts/build-release.sh) or, on Windows, the installer
+    repopulse-X.Y.Z-setup.exe (packaging/windows/build-setup.ps1)."""
     if platform == "windows":
-        return f"{NAME}-{version}-windows.zip"
+        return f"{NAME}-{version}-setup.exe"
     if platform == "linux":
         return f"{NAME}-{version}-linux.tar.gz"
     raise UpdateError(f"Unknown platform {platform!r}")
@@ -338,7 +339,8 @@ def extract(archive: Path, dest: Path, prefix: str) -> Path:
 
 
 def download_release(gh: GitHub, release: Release, platform: str, dest: Path) -> Path:
-    """Download, verify and extract ``release`` into the empty ``dest``; returns the extracted release folder."""
+    """Download, verify and extract ``release`` into the empty ``dest``; returns the extracted release folder (Linux)
+    or the verified installer (Windows)."""
     name = asset_name(release.version, platform)
     if name not in release.assets:
         raise UpdateError(f"Release {release.tag} has no {name}")
@@ -361,6 +363,13 @@ def download_release(gh: GitHub, release: Release, platform: str, dest: Path) ->
         archive.unlink()
         raise UpdateError(f"Checksum mismatch for {name}: expected {expected}, got {actual}")
     log.info("SHA-256 verified (%s)", actual)
+    if name.endswith(".exe"):
+        # the Windows installer is run as it is (auto-update.ps1); nothing to extract
+        target = dest / "release" / name
+        target.parent.mkdir()
+        archive.replace(target)
+        shutil.rmtree(downloads, ignore_errors=True)
+        return target
     root = extract(archive, dest / "release", f"{NAME}-{release.version}")
     shutil.rmtree(downloads, ignore_errors=True)
     return root

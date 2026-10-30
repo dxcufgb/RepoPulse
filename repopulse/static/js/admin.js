@@ -3,7 +3,7 @@
 import { api, session } from "./api.js";
 import { ACCENTS, DEFAULTS, SECTIONS, appearance, setAppearance } from "./appearance.js";
 import { Dashboard } from "./dashboard.js";
-import { $, $$, confirmDialog, dialog, fmt, fmtDateTime, markup, icon, raw, setHTML, timeAgo, toast } from "./util.js";
+import { $, $$, confirmDialog, dialog, fmt, fmtDateTime, markup, icon, raw, safeUrl, setHTML, timeAgo, toast } from "./util.js";
 import { colorsFor, palette, repoHref } from "./widgets.js";
 
 const TABS = [["", "Dashboard layout"], ["repos", "Repositories"], ["collection", "Data collection"], ["appearance", "Appearance"], ["settings", "Settings"]];
@@ -70,6 +70,8 @@ export function renderLogin(main, site, onDone) {
 
 /* ------------------------------------------------------------ shell */
 export async function renderAdmin(main, sub, navigate, slug = null) {
+  // the views that show a running collection start polling again themselves
+  stopPolling();
   setHTML(main, markup`
     <div class="admin-head"><h1>Admin</h1>
       <div class="row" style="align-items:center"><span class="muted">Logged in as ${session.user}</span>
@@ -77,6 +79,7 @@ export async function renderAdmin(main, sub, navigate, slug = null) {
     <nav class="tabs" aria-label="Admin sections">${TABS.map(([k, l]) => markup`<a href="/admin${k ? "/" + k : ""}" ${sub === k ? raw('aria-current="page"') : ""}>${l}</a>`)}</nav>
     <div id="admin-body"><p class="muted">Loading…</p></div>`);
   $("#logout").addEventListener("click", async () => {
+    stopPolling();
     await api("/api/auth/logout", { method: "POST" }).catch(() => {});
     session.user = null; session.csrf = null;
     navigate("/");
@@ -98,6 +101,7 @@ export async function renderAdmin(main, sub, navigate, slug = null) {
 
 /* -------------------------------------------------- waiting for collection */
 let pollTimer = null;
+function stopPolling() { clearTimeout(pollTimer); pollTimer = null; }
 function waitForCollection(onDone, label = "Collecting from GitHub…") {
   clearTimeout(pollTimer);
   const banner = $("#collect-status");
@@ -113,7 +117,11 @@ function waitForCollection(onDone, label = "Collecting from GitHub…") {
         else toast(last.message ? last.message.split("\n")[0] : `Collection ${last.status}`, "error");
       }
       onDone && onDone(r);
-    } catch { pollTimer = setTimeout(tick, 3000); }
+    } catch (ex) {
+      // logged out or no longer allowed: stop instead of asking forever
+      if (ex.status === 401 || ex.status === 403 || !session.user) { if (banner) banner.hidden = true; pollTimer = null; return; }
+      pollTimer = setTimeout(tick, 3000);
+    }
   };
   pollTimer = setTimeout(tick, 800);
 }
@@ -168,7 +176,7 @@ async function reposView(body) {
           <span>${r.days} ${r.days === 1 ? "day" : "days"} of history</span>
           ${r.asset_filter ? markup`<span>counting ${r.asset_filter}</span>` : ""}
           <span>${r.last_collected ? "collected " + timeAgo(r.last_collected) : "not collected yet"}</span>
-          <a href="${r.url}" target="_blank" rel="noopener">GitHub</a>
+          ${safeUrl(r.url) ? markup`<a href="${safeUrl(r.url)}" target="_blank" rel="noopener">GitHub</a>` : ""}
         </div>
         ${r.last_error ? markup`<div class="error-text" style="font-size:13.5px;margin-top:3px">${r.last_error}</div>` : ""}
       </div>
@@ -388,7 +396,7 @@ async function updatesPanel(box) {
       const r = await api("/api/admin/update/check", { method: "POST", body: { force: true } });
       if (r.error) { setHTML(out, markup`<span class="error-text">${r.error}</span>`); return; }
       if (!r.newer) { setHTML(out, markup`<span class="muted">Up to date (latest release: ${r.latest || "none"}).</span>`); return; }
-      setHTML(out, markup`<span><strong>RepoPulse ${r.latest}</strong> is available. <a href="${r.url}" target="_blank" rel="noopener">What's new</a></span>
+      setHTML(out, markup`<span><strong>RepoPulse ${r.latest}</strong> is available.${safeUrl(r.url) ? markup` <a href="${safeUrl(r.url)}" target="_blank" rel="noopener">What's new</a>` : ""}</span>
         ${u.setup.now ? markup`<button type="button" class="btn small primary" id="upd-now">Update now</button>`
           : markup`<span class="muted">${how ? markup`Install it with ${linux ? markup`<code>sudo ./install.sh --update-now</code>` : markup`<code>.\install.ps1 -UpdateNow</code>`} after turning automatic updates on, or ` : ""}download it from the release page.</span>`}`);
       $("#upd-now", out)?.addEventListener("click", () => updateNow(r.latest, u));
@@ -645,7 +653,7 @@ async function settingsView(body) {
     e.preventDefault();
     const f = e.target;
     if (await save({ site_title: f.site_title.value, site_subtitle: f.site_subtitle.value, public_dashboard: f.public_dashboard.checked }, "Dashboard settings saved")) {
-      window.dispatchEvent(new CustomEvent("repopulse:site", { detail: { title: f.site_title.value, subtitle: f.site_subtitle.value } }));
+      window.dispatchEvent(new CustomEvent("repopulse:site", { detail: { title: f.site_title.value, subtitle: f.site_subtitle.value, public: f.public_dashboard.checked } }));
     }
   });
   $("#f-collect").addEventListener("submit", async (e) => {

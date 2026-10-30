@@ -8,7 +8,6 @@ import os
 import tarfile
 import tempfile
 import unittest
-import zipfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -33,14 +32,6 @@ def make_tar(version, extra=None, raw_names=False):
     return buf.getvalue()
 
 
-def make_zip(version):
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        for name, data in BASE_FILES.items():
-            zf.writestr(f"repopulse-{version}/{name}", data)
-    return buf.getvalue()
-
-
 class FakeGitHub:
     """Serves a release like GitHub: API asset URLs answer 302 to a pre-signed CDN URL."""
 
@@ -48,8 +39,8 @@ class FakeGitHub:
         self.calls = []
         self.reject_token = reject_token
         tar = make_tar(version) if archive is None else archive
-        zdata = make_zip(version)
-        name, zname = f"repopulse-{version}-linux.tar.gz", f"repopulse-{version}-windows.zip"
+        zdata = b"MZ fake installer " + version.encode()
+        name, zname = f"repopulse-{version}-linux.tar.gz", f"repopulse-{version}-setup.exe"
         if sums is None:
             sums = f"{hashlib.sha256(tar).hexdigest()}  {name}\n{hashlib.sha256(zdata).hexdigest()}  {zname}\n".encode()
         self.files = {f"{CDN}/1": tar, f"{CDN}/2": sums, f"{CDN}/3": zdata}
@@ -112,8 +103,12 @@ class Run(unittest.TestCase):
             code, out, _ = self.run_main(fake, "download", "--dest", str(dest), platform=platform)
             self.assertEqual(code, updater.EXIT_OK)
             root = Path(out.strip().splitlines()[-1])
-            self.assertEqual(root, dest / "release" / "repopulse-1.3.0")
-            self.assertTrue((root / "repopulse" / "__init__.py").is_file())
+            if platform == "windows":  # the verified installer itself
+                self.assertEqual(root, dest / "release" / "repopulse-1.3.0-setup.exe")
+                self.assertEqual(root.read_bytes(), b"MZ fake installer 1.3.0")
+            else:
+                self.assertEqual(root, dest / "release" / "repopulse-1.3.0")
+                self.assertTrue((root / "repopulse" / "__init__.py").is_file())
             self.assertFalse((dest / "download").exists())
             # the token went to api.github.com only, never to the CDN the download is redirected to
             for url, headers in fake.calls:
