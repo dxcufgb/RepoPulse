@@ -44,9 +44,14 @@ def create_user(db: Database, username: str, password: str) -> None:
                (username, hash_password(password), now_iso()))
 
 
-def set_password(db: Database, username: str, password: str) -> bool:
+def set_password(db: Database, username: str, password: str, keep_sid: str | None = None) -> bool:
+    """Changes the password and ends every session of the account (except `keep_sid`, the one that changed it)."""
     cur = db.execute("UPDATE users SET password_hash = ? WHERE username = ?",
                      (hash_password(password), username))
+    if cur.rowcount > 0:
+        keep = _sid_hash(keep_sid) if keep_sid else ""
+        db.execute("DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE username = ?) AND id != ?",
+                   (username, keep))
     return cur.rowcount > 0
 
 
@@ -134,9 +139,21 @@ class LoginThrottle:
             self.failures.pop(ip, None)
 
 
+def _sid_hash(sid: str) -> str:
+    return hashlib.sha256(str(sid).encode("utf-8")).hexdigest()
+
+
 def start_session(user, remember: bool) -> str:
     session.clear()
     g.pop("repopulse_user", None)
+    db: Database = current_app.extensions["repopulse"].db
+    now = int(time.time())
+    lifetime = int(current_app.permanent_session_lifetime.total_seconds())
+    sid = secrets.token_urlsafe(32)
+    db.execute("DELETE FROM sessions WHERE expires_at <= ?", (now,))
+    db.execute("INSERT INTO sessions(id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+               (_sid_hash(sid), user["id"], now, now + lifetime))
+    session["sid"] = sid
     session["uid"] = user["id"]
     session["user"] = user["username"]
     session["csrf"] = secrets.token_urlsafe(32)
@@ -146,19 +163,33 @@ def start_session(user, remember: bool) -> str:
 
 
 def logged_in_user():
-    """The signed-in account's row, or None. A session whose account is gone or whose password changed since it
-    was started (the fingerprint `pv` no longer matches) is cleared. Checked once per request."""
+    """The signed-in account's row, or None. A session that was logged out (its row in `sessions` is gone or
+    expired), whose account is gone, or whose password changed since it was started (the fingerprint `pv` no longer
+    matches) is cleared. Checked once per request."""
     if "repopulse_user" in g:
         return g.repopulse_user
     row = None
     if session.get("uid"):
         db: Database = current_app.extensions["repopulse"].db
         row = db.query_one("SELECT id, username, password_hash FROM users WHERE id = ?", (session["uid"],))
-        if row is None or not secrets.compare_digest(str(session.get("pv", "")), pw_fingerprint(row["password_hash"])):
+        live = session.get("sid") and db.query_one(
+            "SELECT 1 FROM sessions WHERE id = ? AND user_id = ? AND expires_at > ?",
+            (_sid_hash(session["sid"]), session["uid"], int(time.time())))
+        if (row is None or not live
+                or not secrets.compare_digest(str(session.get("pv", "")), pw_fingerprint(row["password_hash"]))):
             session.clear()
             row = None
     g.repopulse_user = row
     return row
+
+
+def end_session() -> None:
+    """Logs this session out for good: its row goes, so a copy of the cookie no longer works either."""
+    sid = session.get("sid")
+    if sid:
+        current_app.extensions["repopulse"].db.execute("DELETE FROM sessions WHERE id = ?", (_sid_hash(sid),))
+    session.clear()
+    g.pop("repopulse_user", None)
 
 
 def current_user() -> str | None:

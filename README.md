@@ -420,8 +420,10 @@ TLS, so `none` is for a local relay without login. For Gmail use `smtp.gmail.com
   current passwords when changing it) from one address lock that address out for five minutes.
 - Admin requests need both the session cookie and a CSRF token; the page sends a
   strict Content-Security-Policy.
-- Changing a password (in Settings or with `set-password`) logs out every other
-  session of that account, for the admin pages and for hidden repositories alike.
+- Sessions are kept on the server as well as in the cookie: **Log out** ends the session for good, so a copy of the
+  cookie stops working at once, and changing a password (in Settings or with `set-password`) logs out every other
+  session of that account, for the admin pages and for hidden repositories alike. Sessions last at most 30 days.
+  (Updating from a version without server-side sessions logs everyone out once.)
 - `X-Forwarded-*` headers count only with `behind_proxy` and only from this computer or `trusted_proxies`.
 - The GitHub token is sent only to the configured API address: a redirect to another host drops it.
 - The installed server runs as its own unprivileged account (`repopulse` on Linux, `LOCAL SERVICE` on Windows)

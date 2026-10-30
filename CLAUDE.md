@@ -59,7 +59,9 @@ single-page frontend without a build step. Python 3.9+; runtime dependencies are
 ## Review focus
 
 - **Admin API**: every `/api/admin/` route has `@auth.admin_required`; changes need the `X-CSRF-Token` header.
-  Changing a password ends every other session (`pw_fingerprint`). Request bodies are user input.
+  Sessions live in the `sessions` table too (only the SHA-256 of the cookie's `sid`): logout deletes the row
+  (`auth.end_session`), a password change deletes the account's other rows and changes `pv`. Request bodies are
+  user input.
 - **First-run setup** is allowed only from the server itself (`is_local_request`: loopback peer, loopback Host header,
   no proxy headers) unless `allow_remote_setup`; forwarded headers count only with `behind_proxy` and only from
   loopback or `trusted_proxies` (`auth.TrustedProxyFix`). Sessions are checked with `auth.logged_in_user()` (`pv`).

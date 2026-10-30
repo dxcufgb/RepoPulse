@@ -259,7 +259,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
     # nosemgrep: python.lang.maintainability.useless-inner-function -- the decorator registers it with Flask
     @app.post("/api/auth/logout")
     def logout():
-        session.clear()
+        auth.end_session()
         return jsonify(ok=True)
 
     # nosemgrep: python.lang.maintainability.useless-inner-function -- the decorator registers it with Flask
@@ -611,8 +611,8 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
         problem = auth.validate_new_password(user["username"], str(data.get("new", "")))
         if problem:
             return jsonify(error=problem), 400
-        auth.set_password(db, user["username"], str(data["new"]))
-        # Keep this session valid; every OTHER session's fingerprint no longer matches, so they drop.
+        # Ends every other session of the account (their rows go); this one stays.
+        auth.set_password(db, user["username"], str(data["new"]), keep_sid=session.get("sid"))
         fresh = db.query_one("SELECT password_hash FROM users WHERE id = ?", (session["uid"],))
         if fresh is not None:
             session["pv"] = auth.pw_fingerprint(fresh["password_hash"])
