@@ -67,7 +67,7 @@ The full guide is in the [wiki](https://github.com/dxcufgb/RepoPulse/wiki):
 - [Configuration Reference](https://github.com/dxcufgb/RepoPulse/wiki/Configuration-Reference): `config.json`, environment variables, reverse proxy
 - [Command Line](https://github.com/dxcufgb/RepoPulse/wiki/Command-Line) and [Data and Backups](https://github.com/dxcufgb/RepoPulse/wiki/Data-and-Backups)
 - [Updating](https://github.com/dxcufgb/RepoPulse/wiki/Updating): by hand and automatic updates
-- [Update E-mails](https://github.com/dxcufgb/RepoPulse/wiki/Update-E-mails): notifications about installed and failed updates
+- [Update Emails](https://github.com/dxcufgb/RepoPulse/wiki/Update-Emails): notifications about installed and failed updates
 - [Security Notes](https://github.com/dxcufgb/RepoPulse/wiki/Security-Notes) and [Troubleshooting](https://github.com/dxcufgb/RepoPulse/wiki/Troubleshooting)
 
 ## Licences
