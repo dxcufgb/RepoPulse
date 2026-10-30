@@ -47,6 +47,14 @@ The page loads nothing from the internet: fonts and Chart.js are included.
   stars, forks, most downloaded repository…), line, area and bar charts over time (per day, week or month, per
   repository or combined), per-repository bars or ring charts, per-release charts for one repository, sortable
   tables, and text notes. Every chart can switch to a table view.
+- **Charts you can tune** per widget: lines, stacked or overlapping areas, stacked, side-by-side or 100% bars,
+  rings, pies, polar areas and ranked lists; how many repositories (or releases, files) get a series of their own
+  and whether the rest become "Other" or are left out; order, legend position, chart height, grid and axes, linear
+  or logarithmic scale, smooth, straight or stepped lines, moving averages, a total line, values written on the
+  chart, colours and the card style.
+- **A look of your own** under Admin, Appearance: presets, accent colour, chart palette, page and card colours,
+  background, fonts, corners, spacing, page width, card and headline styles, and what visitors see (starting
+  range, range switch, CSV button, animations).
 - **A page per repository** with downloads per release tag, how each release is picked up over time, downloads per
   file and more. Click any repository on the dashboard to open it.
 - **Admin area** (login required): add repositories by name or link, browse all public repositories of a user or
@@ -130,6 +138,40 @@ Use `--port 9000` with either installer to pick another port than 8080.
 4. Under **Dashboard layout**, choose **Edit layout** to add, edit, reorder
    (drag the grip or use the arrows), duplicate and remove widgets, then
    **Save layout**. A starter layout is used until you save your own.
+5. Under **Appearance**, pick a preset or set the colours, fonts and shapes.
+   The page and a preview change as you go; **Save appearance** shows it to
+   visitors.
+
+## Customising charts and the page
+
+Each widget's settings (the pencil in edit mode) have the data choices first
+and a **Look** section after them. Options only appear where they make sense:
+
+- **Chart type**: over-time charts can be lines, stacked areas, overlapping
+  areas, 100% areas, stacked bars, bars side by side or 100% bars;
+  per-repository charts can be horizontal or vertical bars, a ring, a pie, a
+  polar area or a ranked list; release and file widgets add lines, rings and
+  pies.
+- **Shown on their own**: how many repositories, releases or files get their
+  own series (Automatic is up to 8, else the 7 largest plus "Other"). With a
+  fixed number, **The others** can be folded into "Other" or left out.
+- **Look**: legend above, below, beside or hidden; chart height; grid lines and
+  axes; logarithmic value axis; smooth, straight or stepped lines; data
+  points; smoothing (moving average); a dashed total line; values written on
+  the chart; colours (repository colours, the page palette in order, or shades
+  of the accent colour); and the card (highlighted, tinted, no border or no
+  card at all). Numbers and headlines can use short numbers (12.3K), tables can
+  show fewer rows and columns, and text notes can be larger, centred and
+  without a title.
+
+**Admin, Appearance** sets the look of the whole page for everyone: a preset
+(Midnight, Paper, Neon, Minimal, Soft, Terminal), the default theme, the accent
+colour, the chart palette, page and card colours, a background (gradient, glow,
+dots, grid), cards (border, shadow, flat, outline), corners, spacing, page
+width, font (only fonts included with RepoPulse or the visitor's system), the
+style of widget titles and of the headline band, the logo and subtitle, and for
+visitors the starting range, whether the range switch and the CSV button show,
+and animations. Visitors keep the sun/moon button to switch light and dark.
 
 ## Repository pages
 

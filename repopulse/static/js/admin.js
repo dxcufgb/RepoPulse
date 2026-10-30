@@ -1,11 +1,12 @@
 // Admin pages: login / first-run setup, repositories, collection log, settings.
 
 import { api, session } from "./api.js";
+import { ACCENTS, DEFAULTS, SECTIONS, appearance, setAppearance } from "./appearance.js";
 import { Dashboard } from "./dashboard.js";
 import { $, $$, confirmDialog, dialog, fmt, fmtDateTime, markup, icon, raw, setHTML, timeAgo, toast } from "./util.js";
 import { colorsFor, palette, repoHref } from "./widgets.js";
 
-const TABS = [["", "Dashboard layout"], ["repos", "Repositories"], ["collection", "Data collection"], ["settings", "Settings"]];
+const TABS = [["", "Dashboard layout"], ["repos", "Repositories"], ["collection", "Data collection"], ["appearance", "Appearance"], ["settings", "Settings"]];
 
 /* ------------------------------------------------------------ login */
 export function renderLogin(main, site, onDone) {
@@ -85,6 +86,7 @@ export async function renderAdmin(main, sub, navigate, slug = null) {
     if (sub === "repos") return await reposView(body);
     if (sub === "collection") return await collectionView(body);
     if (sub === "settings") return await settingsView(body);
+    if (sub === "appearance") return await appearanceView(body);
     const dash = new Dashboard(body, { editable: true, slug });
     await dash.load();
     dash.render();
@@ -356,6 +358,120 @@ function statusTag(s) {
   const map = { ok: ["ok", "Succeeded"], partial: ["warn", "Partly failed"], failed: ["err", "Failed"], running: ["", "Running"] };
   const [cls, label] = map[s] || ["", s];
   return markup`<span class="tag ${cls}">${label}</span>`;
+}
+
+/* --------------------------------------------------------- appearance */
+// Ready-made combinations; options not named keep their default. The visitor
+// options (range, buttons, animations) are never changed by a preset.
+const PRESETS = [
+  ["default", "RepoPulse", {}],
+  ["midnight", "Midnight", { theme: "dark", surface: "cool", background: "glow", cards: "shadow", palette: "ocean", headline: "gradient", accent: "#3d8bfd" }],
+  ["paper", "Paper", { theme: "light", surface: "warm", font: "serif", cards: "flat", radius: "sharp", palette: "forest", titles: "caps", accent: "#8a5a2b" }],
+  ["neon", "Neon", { theme: "dark", surface: "contrast", palette: "vivid", headline: "accent", accent: "#ff3d71", background: "grid", radius: "soft" }],
+  ["minimal", "Minimal", { surface: "contrast", cards: "outline", palette: "grey", titles: "caps", density: "compact", radius: "sharp", accent: "#171a20" }],
+  ["soft", "Soft", { palette: "pastel", radius: "round", cards: "shadow", surface: "tinted", headline: "tint", background: "gradient", font: "rounded", accent: "#6250d6" }],
+  ["terminal", "Terminal", { theme: "dark", font: "mono", palette: "forest", accent: "#1baf7a", cards: "outline", radius: "sharp", background: "dots", titles: "caps" }],
+];
+const VISITOR_KEYS = ["default_range", "rangebar", "csv", "motion", "brand", "subtitle"];
+
+async function appearanceView(body) {
+  let saved = { ...appearance() };
+  let draft = { ...saved };
+  let preview = null;
+  const dirty = () => JSON.stringify(draft) !== JSON.stringify(saved);
+  const apply = () => {
+    setAppearance(draft, { remember: false });
+    window.dispatchEvent(new CustomEvent("repopulse:theme"));
+    const bar = $("#look-bar", body);
+    if (bar) bar.hidden = !dirty();
+  };
+  const accentNow = () => draft.accent || getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#2a78d6";
+
+  const draw = () => {
+    setHTML(body, markup`
+      <section class="panel"><h2>Appearance</h2>
+        <p class="lead">How the dashboard looks for everyone. Changes show at once on this page and in the preview below; visitors see them after you save.</p>
+        <div class="field"><span>Start from a preset</span><div class="preset-row" role="group" aria-label="Presets">
+          ${PRESETS.map(([k, label]) => markup`<button type="button" class="btn small" data-preset="${k}">${label}</button>`)}</div></div>
+      </section>
+      ${SECTIONS.map(([title, opts], si) => markup`<section class="panel"><h2>${title}</h2>
+        <div class="look-grid">
+          ${si === 0 ? markup`<div class="field"><span>Accent colour <span class="hint">buttons, links, the headline pulse</span></span>
+            <div class="accent-row">
+              <button type="button" class="swatch-btn builtin" data-accent="" aria-pressed="${String(!draft.accent)}" title="Built-in blue" aria-label="Built-in blue"></button>
+              ${ACCENTS.map((c) => markup`<button type="button" class="swatch-btn" data-accent="${c}" style="background:${c}" aria-pressed="${String(draft.accent === c)}" title="${c}" aria-label="Accent ${c}"></button>`)}
+              <label class="swatch-custom" title="Any colour"><span class="sr-only">Any accent colour</span><input type="color" id="look-accent" value="${accentNow()}"></label>
+            </div></div>` : ""}
+          ${opts.map(([k, label, hint, choices]) => markup`<label class="field" for="look-${k}"><span>${label}${hint ? markup` <span class="hint">${hint}</span>` : ""}</span>
+            <select class="input" id="look-${k}" data-look="${k}">${choices.map(([v, l]) => markup`<option value="${v}" ${draft[k] === v ? "selected" : ""}>${l}</option>`)}</select></label>`)}
+        </div></section>`)}
+      <section class="panel"><h2>Preview</h2><p class="lead">The first widgets of the dashboard, as visitors see them.</p>
+        <div id="look-preview" class="look-preview"><p class="muted">Loading…</p></div></section>
+      <div class="look-bar" id="look-bar" ${dirty() ? "" : raw("hidden")} role="region" aria-label="Unsaved appearance">
+        <span><strong>Unsaved changes.</strong> <span class="muted">Visitors still see the saved look.</span></span>
+        <span class="row"><button type="button" class="btn small ghost" data-look-act="defaults">Built-in look</button>
+          <button type="button" class="btn small" data-look-act="discard">Discard</button>
+          <button type="button" class="btn small primary" data-look-act="save">Save appearance</button></span>
+      </div>`);
+
+    $$("[data-look]", body).forEach((el) => el.addEventListener("change", () => { draft[el.dataset.look] = el.value; apply(); }));
+    $$("[data-accent]", body).forEach((b) => b.addEventListener("click", () => {
+      draft.accent = b.dataset.accent;
+      $$("[data-accent]", body).forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      apply();
+      $("#look-accent", body).value = accentNow();
+    }));
+    $("#look-accent", body).addEventListener("input", (e) => {
+      draft.accent = e.target.value.toLowerCase();
+      $$("[data-accent]", body).forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.accent === draft.accent)));
+      apply();
+    });
+    $$("[data-preset]", body).forEach((b) => b.addEventListener("click", () => {
+      const [, , values] = PRESETS.find(([k]) => k === b.dataset.preset);
+      const keep = Object.fromEntries(VISITOR_KEYS.map((k) => [k, draft[k]]));
+      draft = { ...DEFAULTS, ...values, ...keep };
+      apply(); redraw(`[data-preset="${b.dataset.preset}"]`);
+    }));
+    $$("[data-look-act]", body).forEach((b) => b.addEventListener("click", async () => {
+      const act = b.dataset.lookAct;
+      if (act === "defaults") { draft = { ...DEFAULTS }; apply(); redraw(); return; }
+      if (act === "discard") { draft = { ...saved }; apply(); redraw(); return; }
+      try {
+        const res = await api("/api/admin/appearance", { method: "PUT", body: { appearance: draft } });
+        saved = { ...res.appearance }; draft = { ...saved };
+        setAppearance(saved);
+        window.dispatchEvent(new CustomEvent("repopulse:theme"));
+        $("#look-bar", body).hidden = true;
+        toast("Appearance saved");
+      } catch (ex) { toast(ex.message, "error"); }
+    }));
+    showPreview();
+  };
+  const redraw = (focusSel) => {
+    const y = window.scrollY;
+    preview?.destroy(); preview = null;
+    draw();
+    window.scrollTo({ top: y });
+    if (focusSel) $(focusSel, body)?.focus();
+  };
+  const showPreview = async () => {
+    const box = $("#look-preview", body);
+    const dash = new Dashboard(box, {});
+    preview = dash;
+    try {
+      await dash.load();
+      if (preview !== dash) return;
+      dash.layout = { widgets: dash.layout.widgets.slice(0, 6) };
+      dash.render();
+    } catch (e) { setHTML(box, markup`<p class="error-text">${e.message}</p>`); }
+  };
+  draw();
+  return {
+    destroy() {
+      preview?.destroy();
+      if (dirty()) { setAppearance(saved); toast("Unsaved appearance changes were discarded"); }
+    },
+  };
 }
 
 /* ----------------------------------------------------------- settings */

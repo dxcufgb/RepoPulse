@@ -2,6 +2,7 @@
 
 import { renderAdmin, renderLogin } from "./admin.js";
 import { api, session } from "./api.js";
+import { applyLook, setAppearance } from "./appearance.js";
 import { Dashboard } from "./dashboard.js";
 import { $, $$, markup, setHTML } from "./util.js";
 
@@ -14,12 +15,6 @@ function setSiteText(title, subtitle) {
   $("#site-subtitle").textContent = subtitle || "";
 }
 
-function setupChartDefaults() {
-  if (!window.Chart) return;
-  const css = getComputedStyle(document.documentElement);
-  window.Chart.defaults.font.family = css.getPropertyValue("--font-ui").trim();
-  window.Chart.defaults.color = css.getPropertyValue("--muted").trim();
-}
 
 export function navigate(path, { replace = false } = {}) {
   if (replace) history.replaceState({}, "", path); else history.pushState({}, "", path);
@@ -47,7 +42,7 @@ async function route() {
         current = await renderAdmin(main, "", navigate, decodeURIComponent(sub.slice(5)));
         return;
       }
-      current = await renderAdmin(main, ["repos", "collection", "settings"].includes(sub) ? sub : "", navigate);
+      current = await renderAdmin(main, ["repos", "collection", "appearance", "settings"].includes(sub) ? sub : "", navigate);
       return;
     }
     if (!site.public && !session.user) {
@@ -92,11 +87,11 @@ $("#theme-toggle").addEventListener("click", () => {
   const next = dark ? "light" : "dark";
   rootEl.dataset.theme = next;
   try { localStorage.setItem("repopulse-theme", next); } catch { /* ignore */ }
-  setupChartDefaults();
+  applyLook();
   window.dispatchEvent(new CustomEvent("repopulse:theme"));
 });
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-  if (!document.documentElement.dataset.theme) { setupChartDefaults(); window.dispatchEvent(new CustomEvent("repopulse:theme")); }
+  if (!document.documentElement.dataset.theme) { applyLook(); window.dispatchEvent(new CustomEvent("repopulse:theme")); }
 });
 
 async function boot() {
@@ -109,8 +104,9 @@ async function boot() {
   session.user = site.user;
   session.csrf = site.csrf;
   setSiteText(site.title, site.subtitle);
+  setAppearance(site.appearance);
   if (document.readyState !== "complete") await new Promise((r) => window.addEventListener("load", r, { once: true }));
-  setupChartDefaults();
+  applyLook();
   route();
 }
 boot();

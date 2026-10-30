@@ -11,7 +11,7 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, request, send_from_directory, session
 from werkzeug.exceptions import HTTPException
 
-from . import __version__, auth, stats
+from . import __version__, appearance, auth, stats
 from .collector import Collector, Scheduler, now_iso
 from .config import Config
 from .db import Database
@@ -164,6 +164,7 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
             needs_setup=auth.user_count(db) == 0,
             setup_allowed=auth.user_count(db) == 0 and (cfg.allow_remote_setup or auth.is_local_request()),
             version=__version__,
+            appearance=appearance.clean(settings.get("appearance")),
         )
 
     # nosemgrep: python.lang.maintainability.useless-inner-function -- the decorator registers it with Flask
@@ -441,6 +442,18 @@ def create_app(cfg: Config, start_scheduler: bool = True) -> Flask:
                     return jsonify(error=f"Token check failed: {exc}"), 400
             db.set_setting("github_token", token)
         return get_settings()
+
+    @app.put("/api/admin/appearance")
+    @auth.admin_required
+    def put_appearance():
+        """The page-wide look; options left out keep their saved value."""
+        data = body().get("appearance")
+        problem = appearance.validate(data)
+        if problem:
+            return jsonify(error=problem), 400
+        merged = {**appearance.clean(db.get_setting("appearance", None)), **data}
+        db.set_setting("appearance", appearance.clean(merged))
+        return jsonify(appearance=appearance.clean(merged))
 
     def valid_layout(layout) -> str | None:
         if not isinstance(layout, dict) or not isinstance(layout.get("widgets"), list):
