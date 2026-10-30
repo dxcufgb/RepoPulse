@@ -85,7 +85,7 @@ Type: files; Name: "{group}\RepoPulse admin.url"
 var
   PortPage: TInputQueryWizardPage;
   AdminPage: TInputQueryWizardPage;
-  MigratePage: TInputDirWizardPage;
+  MigratePage: TInputQueryWizardPage;
   PurgeData: Boolean;
 
 function SetEnvironmentVariable(lpName, lpValue: String): Boolean;
@@ -161,13 +161,13 @@ begin
   PortPage.Add('Port:', False);
   PortPage.Values[0] := ExpandConstant('{param:PORT|8080}');
 
-  MigratePage := CreateInputDirPage(PortPage.ID, 'Earlier RepoPulse (optional)',
+  { A text field, not a folder page: a folder page does not accept an empty value. }
+  MigratePage := CreateInputQueryPage(PortPage.ID, 'Earlier RepoPulse (optional)',
     'Bring the data of a RepoPulse you started from an unzipped folder?',
     'If you ran RepoPulse before from an unzipped folder (with run.bat or install.ps1), its database, settings and ' +
     'admin account are copied. Leave this empty to let the installer look for one by itself (in Downloads, Desktop, ' +
-    'Documents and the old startup task). The old folder is not changed.',
-    False, '');
-  MigratePage.Add('Folder of the earlier RepoPulse:');
+    'Documents and the old startup task). The old folder is not changed.');
+  MigratePage.Add('Folder of the earlier RepoPulse (for example C:\Users\you\Downloads\repopulse-1.1.0):', False);
   MigratePage.Values[0] := ExpandConstant('{param:MIGRATEFROM|}');
 
   AdminPage := CreateInputQueryPage(MigratePage.ID, 'Admin account',

@@ -38,7 +38,7 @@ class ConfigFile(unittest.TestCase):
         cfg = load_config(self.write({"port": 9100, "data_dir": "state", "trusted_proxies": ["10.0.0.0/8"]}))
         self.assertEqual(cfg.port, 9100)
         # relative to the configuration file's folder
-        self.assertEqual(cfg.data_dir, self.tmp / "etc" / "state")
+        self.assertEqual(cfg.data_dir.resolve(), (self.tmp / "etc" / "state").resolve())
         self.assertEqual(cfg.trusted_proxies, ["10.0.0.0/8"])
 
     def test_missing_or_invalid_file(self):
