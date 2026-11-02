@@ -70,6 +70,11 @@ The full guide is in the [wiki](https://github.com/dxcufgb/RepoPulse/wiki):
 - [Update Emails](https://github.com/dxcufgb/RepoPulse/wiki/Update-Emails): notifications about installed and failed updates
 - [Security Notes](https://github.com/dxcufgb/RepoPulse/wiki/Security-Notes) and [Troubleshooting](https://github.com/dxcufgb/RepoPulse/wiki/Troubleshooting)
 
+## Author
+
+Made by [Dxcufgb](https://github.com/dxcufgb). The footer of every page shows the installed version and
+links to GitHub and [Ko-fi](https://ko-fi.com/dxcufgb), if you would like to support the project.
+
 ## Licences
 
 RepoPulse is released under the MIT licence (`LICENSE`). Included third-party files: Chart.js (MIT,

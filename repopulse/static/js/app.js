@@ -113,6 +113,7 @@ async function boot() {
   session.user = site.user;
   session.csrf = site.csrf;
   setSiteText(site.title, site.subtitle);
+  if (site.version) $("#app-version").textContent = `v${site.version}`;
   setAppearance(site.appearance);
   if (document.readyState !== "complete") await new Promise((r) => window.addEventListener("load", r, { once: true }));
   applyLook();

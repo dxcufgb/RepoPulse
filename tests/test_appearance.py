@@ -68,3 +68,16 @@ class SameListsAsTheFrontend(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Footer(AppTestCase):
+    def test_page_has_the_footer(self):
+        html = self.client.get("/").get_data(as_text=True)
+        footer = html[html.index('<footer class="site-footer">'):html.index("</footer>")]
+        self.assertIn("Dxcufgb", footer)
+        self.assertIn('href="https://github.com/dxcufgb"', footer)
+        self.assertIn('href="https://ko-fi.com/dxcufgb"', footer)
+        self.assertIn('id="app-version"', footer)
+        # Links to other sites open in a new tab without handing over this page.
+        for tag in re.findall(r'<a [^>]*target="_blank"[^>]*>', footer):
+            self.assertIn('rel="noopener noreferrer"', tag)
