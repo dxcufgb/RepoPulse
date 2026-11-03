@@ -54,7 +54,7 @@ single-page frontend without a build step. Python 3.9+; runtime dependencies are
   required checks green. Keep the CI job names and the ruleset in step.
 - Releases: Actions → Release → Run workflow → type the version. The version in `repopulse/__init__.py` is not
   bumped by hand; the build stamps it. Release file names are fixed (`scripts/build-release.sh`).
-- Behaviour changes need tests and a README update.
+- Behaviour changes need tests and a wiki update (the README only has the install steps and links to the wiki).
 
 ## Review focus
 
