@@ -15,6 +15,8 @@
   <a href="https://github.com/dxcufgb/RepoPulse/releases/latest"><img src="https://img.shields.io/github/v/release/dxcufgb/RepoPulse?sort=semver" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/python-3.9%2B-3776ab" alt="Python 3.9+">
   <img src="https://img.shields.io/badge/runs%20on-Linux%20%C2%B7%20Raspberry%20Pi%20%C2%B7%20Windows-555" alt="Runs on Linux, Raspberry Pi and Windows">
+  <a href="https://github.com/dxcufgb/RepoPulse/releases"><img src="https://img.shields.io/github/downloads/dxcufgb/RepoPulse/total?label=downloads&color=blue" alt="Downloads"></a>
+  <a href="https://ko-fi.com/dxcufgb"><img src="https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=kofi&logoColor=white" alt="Support on Ko-fi"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/dxcufgb/RepoPulse" alt="MIT licence"></a>
 </p>
 
