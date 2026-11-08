@@ -60,10 +60,14 @@ jobs:
 
   respond:
     name: Respond to @claude
+    # Bot comments are skipped: contains() ignores case, so a bot quoting "@CLAUDE.md" (CodeRabbit does) would start
+    # the job, and claude-code-action refuses bot actors, which fails the run.
     if: >-
-      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
-      ((github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')))
+      github.event.comment.user.type != 'Bot' && (
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+        ((github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')))
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
